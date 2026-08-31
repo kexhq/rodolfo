@@ -46,9 +46,6 @@ tey install
 
 The tag is the release, and `~> 0.1` takes the newest `0.1.x`; Tey resolves it
 against this repository's tags and records the exact commit in `tey.lock`.
-Until `v0.1.0` is tagged, depend on the branch instead:
-`tey("rodolfo", git: "https://github.com/kexhq/rodolfo", branch: "main")` —
-which is what the examples below do.
 
 With the dependency installed, `using Rodolfo` brings the whole DSL into
 scope: the verbs, `run`, `build`, and `start` are plain functions, so a route
@@ -102,7 +99,7 @@ Rodolfo needs Kex `>= 0.4.0-beta`; pick a toolchain with `tey kex install`.
 ## Release it
 
 ```sh
-git tag v0.1.0 && git push origin v0.1.0
+git tag -a v0.1.1 -m "Rodolfo 0.1.1" && git push origin v0.1.1
 ```
 
 The tag is the release — `tey add ... --tag "~> 0.1"` resolves against it.
