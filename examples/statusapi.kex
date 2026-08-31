@@ -1,0 +1,28 @@
+using JSON
+using Rodolfo
+
+main do
+  Rodolfo.run do
+    Rodolfo.respond("GET", "/health") do |_|
+      let body = JSON.stringify({ "status": "ok", "service": "catalog" })
+      let headers = Net.HTTP.Headers.empty
+        .set("Content-Type", "application/json")
+      Net.HTTP.Response.binary(200, body.to(Binary).try, headers)
+    end
+
+    Rodolfo.respond("GET", "/api/books/:id") do |env|
+      let body = JSON.stringify({
+        "id": env.param("id").try,
+        "title": "Programming Kex",
+        "available": true
+      })
+      let headers = Net.HTTP.Headers.empty
+        .set("Content-Type", "application/json")
+      Net.HTTP.Response.binary(200, body.to(Binary).try, headers)
+    end
+
+    Rodolfo.post("/api/echo") do |env|
+      env.request.body.to(String).try
+    end
+  end.try
+end

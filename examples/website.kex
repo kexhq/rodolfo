@@ -1,0 +1,27 @@
+using Rodolfo
+
+let page(title: String, content: String) -> String do
+  "<!doctype html><html><head><title>${title}</title></head><body><nav><a href='/'>Home</a></nav>${content}</body></html>"
+end
+
+main do
+  Rodolfo.run do
+    Rodolfo.respond("GET", "/") do |_|
+      let html = page(
+        "Rodolfo Books",
+        "<h1>Independent books</h1><p>Small catalogue, big ideas.</p>"
+      )
+      let headers = Net.HTTP.Headers.empty
+        .set("Content-Type", "text/html; charset=utf-8")
+      Net.HTTP.Response.binary(200, html.to(Binary).try, headers)
+    end
+
+    Rodolfo.respond("GET", "/authors/:name") do |env|
+      let name = env.param("name").try
+      let html = page(name, "<h1>${name}</h1><p>Author profile</p>")
+      let headers = Net.HTTP.Headers.empty
+        .set("Content-Type", "text/html; charset=utf-8")
+      Net.HTTP.Response.binary(200, html.to(Binary).try, headers)
+    end
+  end.try
+end

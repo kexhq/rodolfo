@@ -1,0 +1,17 @@
+using Rodolfo
+
+main do
+  Rodolfo.run do
+    Rodolfo.get("/") do |_|
+      "Rodolfo says hello!"
+    end
+
+    Rodolfo.get("/hello/:name") do |env|
+      "Hello, ${env.param("name").try}!"
+    end
+
+    Rodolfo.post("/echo") do |env|
+      env.request.body.to(String).try
+    end
+  end.try
+end

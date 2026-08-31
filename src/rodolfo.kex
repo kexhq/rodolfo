@@ -1,0 +1,100 @@
+# A tiny Kemal- and Sinatra-inspired web framework built on Kex's HTTP server.
+module Rodolfo
+
+using Net.HTTP
+using Net.Socket
+
+# The request environment passed to compact route blocks.
+record Env do
+  request : Request<Binary>
+  context : Context
+end
+
+make Env do
+  # Returns a named or wildcard route parameter.
+  param :> String -> Result<String, NetError>
+  let param(name) = @context.route.parameter(name)
+end
+
+# A compact route block whose string result becomes a 200 text response.
+type Handler = Env -> String
+
+# A route block that controls the complete HTTP response.
+type ResponseHandler = Env -> Response<Binary>
+
+# One declaration in a Rodolfo route list.
+type Definition = TextRoute(String, String, Handler)
+  | FullRoute(String, String, ResponseHandler)
+
+route : String -> String -> Handler -> Definition
+let route(method, path, handler) = TextRoute(method, path, handler)
+
+get : String -> Handler -> Definition
+let get(path, handler) = route("GET", path, handler)
+
+post : String -> Handler -> Definition
+let post(path, handler) = route("POST", path, handler)
+
+put : String -> Handler -> Definition
+let put(path, handler) = route("PUT", path, handler)
+
+patch : String -> Handler -> Definition
+let patch(path, handler) = route("PATCH", path, handler)
+
+delete : String -> Handler -> Definition
+let delete(path, handler) = route("DELETE", path, handler)
+
+respond : String -> String -> ResponseHandler -> Definition
+let respond(method, path, handler) = FullRoute(method, path, handler)
+
+module Internal do
+  add : Router -> Definition -> Router
+  let add(router, TextRoute(method, path, handler)) do
+    router.route(method, path) do |request, context|
+      Response.text(200, handler(Env { request: request, context: context }))
+    end
+  end
+  let add(router, FullRoute(method, path, handler)) do
+    router.route(method, path) do |request, context|
+      handler(Env { request: request, context: context })
+    end
+  end
+
+  build : [Definition] -> Router -> Router
+  let build([], router) = router
+  let build([definition | rest], router) do
+    Internal.build(rest, Internal.add(router, definition))
+  end
+end
+
+# Compiles a route block into a router without opening a socket.
+build : Block<[Definition]> -> Router
+let build(definitions) = Internal.build(definitions(), Router.build)
+
+# Runs a route block forever on every interface, on port 3000.
+run : Block<[Definition]> -> Result<Void, NetError>
+foul run(definitions) do
+  run(3000, definitions)
+end
+
+# Runs a route block forever on every interface, on the given port.
+run : Integer -> Block<[Definition]> -> Result<Void, NetError>
+foul run(port, definitions) do
+  let endpoint = TCP.Endpoint.any(Net.Port.from(port).try)
+  Server.serve(endpoint, build(definitions))
+end
+
+# Starts a route block asynchronously for tests and managed lifecycles, on
+# port 3000.
+start : Block<[Definition]> -> Result<Server.Running, NetError>
+foul start(definitions) do
+  start(3000, definitions)
+end
+
+# Starts a route block asynchronously for tests and managed lifecycles, on
+# the given port.
+start : Integer -> Block<[Definition]> -> Result<Server.Running, NetError>
+foul start(port, definitions) do
+  let endpoint = TCP.Endpoint.any(Net.Port.from(port).try)
+  Server.start(endpoint, build(definitions))
+end
