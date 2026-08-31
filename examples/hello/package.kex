@@ -3,12 +3,11 @@
 bundle "hello" do
   version("0.1.0")
   description("Rodolfo example: dynamic parameters and request bodies")
-  kex(">= 0.4.0-alpha")
+  kex(">= 0.4.0-beta")
   license("MIT")
 
   entrypoint("src/main.kex")
 
-  # Rodolfo has no release tag yet, so this tracks main. Once v0.1.0 is
-  # tagged, depend on the release instead: tag: "~> 0.1".
+  # Track main until the library ships a v0.1.0 tag, then switch to tag: "~> 0.1".
   tey("rodolfo", git: "https://github.com/kexhq/rodolfo", branch: "main")
 end

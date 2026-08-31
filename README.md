@@ -97,7 +97,7 @@ tey build     # compile src/ into ebin/
 tey test      # run spec/*.spec.kex on the BEAM
 ```
 
-Rodolfo needs Kex `>= 0.4.0-alpha`; pick a toolchain with `tey kex install`.
+Rodolfo needs Kex `>= 0.4.0-beta`; pick a toolchain with `tey kex install`.
 
 ## Release it
 
