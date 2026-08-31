@@ -9,12 +9,12 @@ let withRequestInfo(handler) do
 end
 
 main do
-  Rodolfo.run do
-    Rodolfo.get("/") do |_|
+  run do
+    get "/" do |_|
       "Open /orders/42 to exercise a dynamic route."
     end
 
-    Rodolfo.get("/orders/:id", withRequestInfo(do |env|
+    get("/orders/:id", withRequestInfo(do |env|
       "Order ${env.param("id").try} is ready"
     end))
   end.try
