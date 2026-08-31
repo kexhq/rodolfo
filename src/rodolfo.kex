@@ -47,29 +47,29 @@ let delete(path, handler) = route("DELETE", path, handler)
 respond : String -> String -> ResponseHandler -> Definition
 let respond(method, path, handler) = FullRoute(method, path, handler)
 
-module Internal do
-  add : Router -> Definition -> Router
-  let add(router, TextRoute(method, path, handler)) do
+private do
+  addRoute : Router -> Definition -> Router
+  let addRoute(router, TextRoute(method, path, handler)) do
     router.route(method, path) do |request, context|
       Response.text(200, handler(Env { request: request, context: context }))
     end
   end
-  let add(router, FullRoute(method, path, handler)) do
+  let addRoute(router, FullRoute(method, path, handler)) do
     router.route(method, path) do |request, context|
       handler(Env { request: request, context: context })
     end
   end
 
-  build : [Definition] -> Router -> Router
-  let build([], router) = router
-  let build([definition | rest], router) do
-    Internal.build(rest, Internal.add(router, definition))
+  compileRoutes : [Definition] -> Router -> Router
+  let compileRoutes([], router) = router
+  let compileRoutes([definition | rest], router) do
+    compileRoutes(rest, addRoute(router, definition))
   end
 end
 
 # Compiles a route block into a router without opening a socket.
 build : Block<[Definition]> -> Router
-let build(definitions) = Internal.build(definitions(), Router.build)
+let build(definitions) = compileRoutes(definitions(), Router.build)
 
 # Runs a route block forever on every interface, on port 3000.
 run : Block<[Definition]> -> Result<Void, NetError>

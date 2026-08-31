@@ -2,26 +2,28 @@ using Rodolfo
 
 describe("Rodolfo") do
   it("compiles terse verb declarations") do
-    let router = Rodolfo.build do
-      Rodolfo.get("/") { |_| "home" }
-      Rodolfo.post("/messages") { |_| "created" }
+    let router = build do
+      get "/" do |_| "home" end
+      post "/messages" do |_| "created" end
     end
 
     Assert.equal(router.routes.count, 2)
   end
 
   it("preserves declaration order") do
-    let router = Rodolfo.build do
-      Rodolfo.get("/users/me") { |_| "me" }
-      Rodolfo.get("/users/:id") { |env| env.param("id").try }
+    let router = build do
+      get "/users/me" do |_| "me" end
+      get "/users/:id" do |env| env.param("id").try end
     end
 
     Assert.equal(router.routes.map(&.path), ["/users/me", "/users/:id"])
   end
 
   it("supports arbitrary methods") do
-    let router = Rodolfo.build do
-      Rodolfo.route("PURGE", "/cache/:key") { |env| env.param("key").try }
+    let router = build do
+      route "PURGE", "/cache/:key" do |env|
+        env.param("key").try
+      end
     end
 
     Assert.equal(router.routes.count, 1)

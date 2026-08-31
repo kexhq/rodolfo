@@ -1,0 +1,14 @@
+# An example you can run as a package: it depends on Rodolfo the way any
+# consumer would — resolved from Git by Tey, not from this checkout.
+bundle "requestinfo" do
+  version("0.1.0")
+  description("Rodolfo example: reusable route-handler wrapping")
+  kex(">= 0.4.0-alpha")
+  license("MIT")
+
+  entrypoint("src/main.kex")
+
+  # Rodolfo has no release tag yet, so this tracks main. Once v0.1.0 is
+  # tagged, depend on the release instead: tag: "~> 0.1".
+  tey("rodolfo", git: "https://github.com/kexhq/rodolfo", branch: "main")
+end
