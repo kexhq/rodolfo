@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "kex": {"requirement": ">= 0.4.0-alpha", "version": "0.4.0-beta"},
+  "kex": {"requirement": ">= 0.4.0-beta", "version": "0.4.0-beta"},
   "otp": {"requirement": "", "release": 29},
   "deps": {
-    "rodolfo": {"git": "https://github.com/kexhq/rodolfo", "resolved": "main", "commit": "1c04dd3cd9609880e57528f95639ccd4b3c95e59", "sha256": "3ce2fe349764e6e38b68645ee03009eb8db247f9fc46f074c955a2348f2192e0", "groups": []}
+    "rodolfo": {"git": "https://github.com/kexhq/rodolfo", "resolved": "main", "commit": "d36c62b9d28f406624294ba73812c865e9f10330", "sha256": "4992c4f1bcd660b9a6abee706a3c5205f78675b37118e80b611e7268e0177893", "groups": []}
   }
 }

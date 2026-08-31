@@ -1,0 +1,24 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rodolfo needs `kex(">= 0.4.0-beta")`; the published pre-releases
+      # (0.4.0-alpha, 0.4.0-alpha.2) predate the paren-less import fix and
+      # cannot compile this source, so pin to the beta that can.
+      - uses: kexhq/setup-tey@v1
+        with:
+          kex-version: 0.4.0-beta
+      - run: tey install
+      - run: tey build
+      - run: tey test
