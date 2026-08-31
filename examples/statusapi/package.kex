@@ -8,6 +8,6 @@ bundle "statusapi" do
 
   entrypoint("src/main.kex")
 
-  # Track main until the library ships a v0.1.0 tag, then switch to tag: "~> 0.1".
-  tey("rodolfo", git: "https://github.com/kexhq/rodolfo", branch: "main")
+  # Depend on the named release, drifted forward by tey update.
+  tey("rodolfo", git: "https://github.com/kexhq/rodolfo", tag: "~> 0.1")
 end
