@@ -1,10 +1,55 @@
+# `using Rodolfo` brings the route DSL (`route`, `respond`, `build`, ...).
+# `using Net.HTTP`/`Net.Socket` are selective so the network types' methods
+# (`client.request`, `server.stop`, ...) dispatch. The DSL is limited to
+# `route`/`respond` here on purpose: the bare verb sugar (`get`/`post`/...) has
+# the same names as Net.HTTP's Router make-methods, and a foul make-method of a
+# same-named `using`-imported module makes the pure DSL function lower at +1
+# arity (kexhq/kex#272).
 using Rodolfo
+using Net.HTTP, only: [Client, Server, ServerOptions, Response, Headers, Context, Request, Status]
+using Net.Socket, only: [TCP]
 
-describe("Rodolfo") do
-  it("compiles terse verb declarations") do
+# A running Rodolfo router on an ephemeral loopback port, plus a pooled client
+# pointing at it. Mirrors Kex's own server round-trip spec: port 0 asks the OS
+# for a free port and `localAddress` reports the one it got.
+record ServerState do
+  server : Server.Running
+  client : Client
+  port : Integer
+end
+
+# Starts whatever router `build` produced and returns a state to drive it.
+foul boot(router: Router) -> ServerState do
+  let endpoint = TCP.Endpoint.loopback(Net.Port.from(0).try)
+  let server = Server.start(endpoint, router, ServerOptions {
+    maximumHandlers: 32,
+    backlog: 16,
+    gracefulShutdown: Duration.milliseconds(100)
+  }).try
+  let port = server.localAddress.port.value
+  let client = Client.open().try
+  ServerState { server: server, client: client, port: port }
+end
+
+# Shuts the server and client down. Called from an `after` hook so a failed
+# case never leaks a listener or a pooled connection.
+foul teardown(state: ServerState) do
+  state.client.close().try
+  let report = state.server.stop().try
+  assert(report.forced == 0, "a closed client should need no forced handlers")
+end
+
+# Sends a request with the given method, no headers or body, returning the
+# response.
+foul send(client: Client, port: Integer, method: String, path: String) -> Response<Binary> do
+  client.request(method, "http://127.0.0.1:${port}${path}", Headers.empty, Binary.empty).try
+end
+
+describe("Rodolfo builds a router") do
+  it("compiles route declarations") do
     let router = build do
-      get "/" do |_| "home" end
-      post "/messages" do |_| "created" end
+      route "GET", "/" do |_| "home" end
+      route "POST", "/messages" do |_| "created" end
     end
 
     Assert.equal(router.routes.count, 2)
@@ -12,20 +57,120 @@ describe("Rodolfo") do
 
   it("preserves declaration order") do
     let router = build do
-      get "/users/me" do |_| "me" end
-      get "/users/:id" do |env| env.param("id").try end
+      route "GET", "/users/me" do |_| "me" end
+      route "GET", "/users/:id" do |env| env.param("id").try end
     end
 
     Assert.equal(router.routes.map(&.path), ["/users/me", "/users/:id"])
   end
 
-  it("supports arbitrary methods") do
+  it("compiles a respond handler") do
     let router = build do
-      route "PURGE", "/cache/:key" do |env|
-        env.param("key").try
+      respond "GET", "/health" do |_|
+        Response.text(200, "ok")
       end
     end
 
     Assert.equal(router.routes.count, 1)
+  end
+end
+
+describe("Rodolfo serves requests") do
+  it("answers a text route with a 200 text/plain body") do
+    let router = build do
+      route "GET", "/" do |_| "Rodolfo says hello!" end
+    end
+    let state = boot(router)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(response.status.code, 200)
+    Assert.equal(response.body.to(String).try, "Rodolfo says hello!")
+  end
+
+  it("extracts named route parameters") do
+    let router = build do
+      route "GET", "/hello/:name" do |env|
+        "Hello, ${env.param("name").try}!"
+      end
+    end
+    let state = boot(router)
+    let response = send(state.client, state.port, "GET", "/hello/Radar")
+    teardown(state)
+
+    Assert.equal(response.body.to(String).try, "Hello, Radar!")
+  end
+
+  it("dispatches on HTTP method") do
+    let router = build do
+      route "GET", "/things" do |_| "list" end
+      route "POST", "/things" do |_| "created" end
+    end
+    let state = boot(router)
+    let list = send(state.client, state.port, "GET", "/things")
+    let created = send(state.client, state.port, "POST", "/things")
+    teardown(state)
+
+    Assert.equal(list.body.to(String).try, "list")
+    Assert.equal(created.status.code, 200)
+    Assert.equal(created.body.to(String).try, "created")
+  end
+
+  it("lets a respond handler set a custom status and headers") do
+    let router = build do
+      respond "POST", "/things" do |_|
+        Response.binary(
+          201,
+          "made".to(Binary).try,
+          Headers.from([("X-Created-By", "rodolfo")]).try)
+      end
+    end
+    let state = boot(router)
+    let response = send(state.client, state.port, "POST", "/things")
+    teardown(state)
+
+    Assert.equal(response.status.code, 201)
+    Assert.equal(response.body.to(String).try, "made")
+    Assert.equal(response.headers.get("X-Created-By"), Just("rodolfo"))
+  end
+
+  it("answers a respond text handler through the response path") do
+    let router = build do
+      respond "GET", "/health" do |_|
+        Response.text(200, "ok")
+      end
+    end
+    let state = boot(router)
+    let response = send(state.client, state.port, "GET", "/health")
+    teardown(state)
+
+    Assert.equal(response.body.to(String).try, "ok")
+    Assert.equal(response.status.success?, true)
+  end
+
+  it("returns 404 for an unrouted path") do
+    let router = build do
+      route "GET", "/" do |_| "home" end
+    end
+    let state = boot(router)
+    let response = send(state.client, state.port, "GET", "/missing")
+    teardown(state)
+
+    Assert.equal(response.status.code, 404)
+    Assert.equal(response.status.clientError?, true)
+  end
+
+  it("honours more specific routes over wildcards") do
+    let router = build do
+      route "GET", "/users/me" do |_| "me" end
+      route "GET", "/users/:id" do |env| env.param("id").try end
+    end
+    let state = boot(router)
+    let me = send(state.client, state.port, "GET", "/users/me")
+    let other = send(state.client, state.port, "GET", "/users/42")
+    teardown(state)
+
+    Assert.equal(me.body.to(String).try, "me")
+    Assert.equal(other.body.to(String).try, "42")
   end
 end
