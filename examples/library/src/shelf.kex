@@ -1,0 +1,84 @@
+# Where the catalogue lives between requests: one tab-separated file, read
+# before a change and written after it. Every rule about the books stays in
+# `Catalog`; this module only moves them to and from the disk.
+#
+# A `serving` process would be the natural home for shared state, and this
+# example started there — but Kex 0.4.0-beta does not export a program's slot
+# functions once that program depends on `Net.HTTP`, so a Rodolfo app cannot
+# call its own slots yet. A file is the next simplest store, and it outlasts
+# the server. Two writes that overlap can lose one of the changes, which a
+# one-reader catalogue never notices and a busy one would.
+module Shelf
+
+using Catalog, only: [Book, Draft]
+
+# The catalogue file. `LIBRARY_FILE` moves it, so two servers can run side by
+# side and a spec can point at a scratch copy.
+catalogueFile : String
+foul catalogueFile = ENV.get("LIBRARY_FILE").or("books.tsv")
+
+# Writes the opening catalogue, unless there is one already. Returns the books
+# on the shelf either way.
+opened : [Draft] -> [Book]
+foul opened(drafts) do
+  let fresh? = FS.File.exists?(Shelf.catalogueFile).falsy?
+  fresh? then Shelf.stocked(drafts) else Shelf.books
+end
+
+# Every book, newest first.
+books : [Book]
+foul books = Catalog.sorted(Catalog.decoded(FS.File.read(Shelf.catalogueFile).or("")))
+
+# The books matching a search term; every book when the term is empty.
+matching : String -> [Book]
+foul matching(term) = Catalog.matching(Catalog.decoded(FS.File.read(Shelf.catalogueFile).or("")), term)
+
+# One book, or `None` when no book carries that id.
+find : Integer -> Book?
+foul find(id) = Catalog.withId(Shelf.books, id)
+
+# Files a validated draft and returns the id it was given.
+filed : Draft -> Integer
+foul filed(draft) do
+  let books = Shelf.books
+  let id = Catalog.nextId(books)
+  Shelf.kept(Catalog.added(books, id, draft))
+  id
+end
+
+# Rewrites a book from a validated draft, returning the stored result, or
+# `None` when the id is unknown.
+rewritten : Integer -> Draft -> Book?
+foul rewritten(id, draft) do
+  let books = Catalog.edited(Shelf.books, id, draft)
+  Shelf.kept(books)
+  Catalog.withId(books, id)
+end
+
+# Removes a book, returning whether there was one to remove.
+dropped : Integer -> Bool
+foul dropped(id) do
+  let books = Shelf.books
+  Shelf.kept(Catalog.without(books, id))
+  Catalog.withId(books, id).set?
+end
+
+# Lends a book out or takes it back, returning the stored book.
+lent : Integer -> Bool -> Book?
+foul lent(id, borrowed?) do
+  let books = Catalog.lending(Shelf.books, id, borrowed?)
+  Shelf.kept(books)
+  Catalog.withId(books, id)
+end
+
+# Replaces the catalogue file with `books`.
+kept : [Book] -> Bool
+foul kept(books) = FS.File.write(Shelf.catalogueFile, Catalog.encoded(books))
+
+# Writes a catalogue built from `drafts`, numbering them from one.
+stocked : [Draft] -> [Book]
+foul stocked(drafts) do
+  let books = drafts.reduce([]) { |shelved, draft| Catalog.added(shelved, Catalog.nextId(shelved), draft) }
+  Shelf.kept(books)
+  Catalog.sorted(books)
+end

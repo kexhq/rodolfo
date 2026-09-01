@@ -1,0 +1,269 @@
+# Every page the library serves, and the escaping that keeps a book title
+# from becoming markup.
+#
+# `html$` is a Kex tagged literal: the compiler hands `html` the literal's
+# parts and its interpolated values, so this module — not each caller —
+# decides what escaping means. Plain values are escaped; a `Safe` value is
+# markup this module built already and passes through untouched.
+module Views
+
+using Catalog
+
+# Markup that is already escaped. Wrapping is the only way to opt out of
+# escaping, so an unwrapped `String` can never reach a page as markup.
+record Safe do
+  markup : String
+end
+
+make Safe, implement: Showable do
+  # Interpolating a `Safe` yields its markup, unchanged.
+  let showValue -> String = @markup
+end
+
+# The tag behind every ``html$`...` `` literal below.
+html : [String] -> [Any] -> String
+let html(parts, values) = interleave(parts, values.map(~render))
+
+# Wraps rendered markup so it survives interpolation into another template.
+safe : String -> Safe
+let safe(markup) = Safe { markup: markup }
+
+# Replaces the five characters that would otherwise end an element,
+# an attribute, or the document.
+escape : String -> String
+let escape(text) do
+  text
+    .replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+    .replace("\"", "&quot;")
+    .replace("'", "&#39;")
+end
+
+# The shell every page shares: title, stylesheet, header, and one `Safe` body.
+page : String -> Safe -> String
+let page(title, body) do
+  html$`<!doctype html>
+    <html lang='en'>
+      <head>
+        <meta charset='utf-8'>
+        <meta name='viewport' content='width=device-width, initial-scale=1'>
+        <title>${title} · Rodolfo Library</title>
+        <style>${safe(Views.stylesheet)}</style>
+      </head>
+      <body>
+        <header>
+          <a class='brand' href='/books'>Rodolfo Library</a>
+          <a class='button' href='/books/new'>Add a book</a>
+        </header>
+        <main>${body}</main>
+      </body>
+    </html>
+    `
+end
+
+# The catalogue: a search box, a count, and one row per book.
+index : [Book] -> String -> String? -> String
+let index(books, term, notice) do
+  let rows = books.map(~row).join("")
+  let listing = books.empty? then emptyState(term) else html$`
+    <table>
+      <thead><tr><th>Title</th><th>Author</th><th>Year</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>${safe(rows)}</tbody>
+    </table>
+    `
+  page("Catalogue", safe(html$`
+    ${safe(banner(notice))}
+    <h1>Catalogue</h1>
+    <form class='search' method='get' action='/books'>
+      <input type='search' name='q' value='${term}' placeholder='Title or author' aria-label='Search'>
+      <button type='submit'>Search</button>
+      ${safe(clearSearch(term))}
+    </form>
+    <p class='count'>${summary(books, term)}</p>
+    ${safe(listing)}
+    `))
+end
+
+# One book on its own page, with everything that can be done to it.
+show : Book -> String? -> String
+let show(book, notice) do
+  page(book.title, safe(html$`
+    ${safe(banner(notice))}
+    <h1>${book.title}</h1>
+    <p class='byline'>${book.author} · ${book.year}</p>
+    <p>${safe(badge(book))}</p>
+    <div class='actions'>
+      <a class='button' href='/books/${book.id}/edit'>Edit</a>
+      ${safe(lendingButton(book))}
+      ${safe(deleteButton(book))}
+    </div>
+    <p><a href='/books'>Back to the catalogue</a></p>
+    `))
+end
+
+# The new-book and edit-book form. `errors` is empty on a first visit and
+# carries `Catalog.validate`'s messages when a submission comes back.
+form : String -> String -> Draft -> [String] -> String
+let form(heading, action, draft, errors) do
+  page(heading, safe(html$`
+    <h1>${heading}</h1>
+    ${safe(errorList(errors))}
+    <form method='post' action='${action}'>
+      <label>Title <input name='title' value='${draft.title}' autofocus></label>
+      <label>Author <input name='author' value='${draft.author}'></label>
+      <label>Year <input name='year' value='${draft.year}' inputmode='numeric'></label>
+      <div class='actions'>
+        <button type='submit'>Save</button>
+        <a href='/books'>Cancel</a>
+      </div>
+    </form>
+    `))
+end
+
+# The 404 page, also used when a path carries an id no book has.
+missing : String -> String
+let missing(what) do
+  page("Not found", safe(html$`
+    <h1>Not found</h1>
+    <p>${what}</p>
+    <p><a href='/books'>Back to the catalogue</a></p>
+    `))
+end
+
+# The one-line message a redirect asks the next page to show. Routes send a
+# code rather than prose, so a hand-edited URL cannot inject a message.
+noticeText : String -> String?
+let noticeText(code) do
+  match code do
+    "created" => Just("Book added.")
+    "updated" => Just("Changes saved.")
+    "deleted" => Just("Book removed.")
+    "lent" => Just("Book marked as on loan.")
+    "returned" => Just("Book back on the shelf.")
+    _ => None
+  end
+end
+
+stylesheet : String
+let stylesheet = `
+  :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 15%, transparent); }
+  body { margin: 0 auto; max-width: 52rem; padding: 0 1.5rem 3rem;
+         font: 16px/1.5 system-ui, sans-serif; }
+  header { display: flex; align-items: center; justify-content: space-between;
+           gap: 1rem; padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 600; text-decoration: none; }
+  h1 { font-size: 1.6rem; margin: 1.5rem 0 0.5rem; }
+  .byline, .count { color: color-mix(in srgb, currentColor 65%, transparent); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--line); }
+  th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.actions-cell { white-space: nowrap; }
+  form.search { display: flex; gap: 0.5rem; align-items: center; margin: 1rem 0; }
+  form.search input { flex: 1; }
+  form.inline { display: inline; }
+  input, button, .button { font: inherit; padding: 0.4rem 0.7rem; border-radius: 0.4rem;
+                           border: 1px solid var(--line); background: transparent; color: inherit; }
+  button, .button { cursor: pointer; text-decoration: none; }
+  label { display: block; margin: 0.75rem 0; }
+  label input { display: block; width: 100%; margin-top: 0.25rem; }
+  .actions { display: flex; align-items: center; gap: 0.75rem; margin: 1.25rem 0; }
+  .banner { margin: 1rem 0 0; padding: 0.6rem 0.8rem; border-radius: 0.4rem;
+            border: 1px solid var(--line); }
+  .errors { margin: 1rem 0; padding: 0.6rem 0.8rem 0.6rem 1.8rem; border-radius: 0.4rem;
+            border: 1px solid #c0392b; }
+  .loan { font-weight: 600; }
+  .empty { padding: 2rem 0; }
+  `
+
+private do
+  # Joins n + 1 literal parts with n rendered values.
+  interleave : [String] -> [String] -> String
+  let interleave(parts, values) do
+    let pairs = parts.zip(values + [""])
+    pairs.map { |pair| match pair do (part, value) => part + value end }.join("")
+  end
+
+  # Escapes anything a template interpolates, except markup this module has
+  # already vouched for. A template hole arrives as `Any`, and Kex 0.4.0-beta
+  # cannot pattern-match an imported record through `Any`, so the check
+  # compares types — `Safe` shows as its own markup, everything else escapes.
+  render : Any -> String
+  let render(value) do
+    let vouched? = Type.of(value) == Type.of(safe(""))
+    vouched? then "${value}" else escape("${value}")
+  end
+
+  row : Book -> String
+  let row(book) do
+    html$`
+      <tr>
+        <td><a href='/books/${book.id}'>${book.title}</a></td>
+        <td>${book.author}</td>
+        <td>${book.year}</td>
+        <td>${safe(badge(book))}</td>
+        <td class='actions-cell'>
+          <a href='/books/${book.id}/edit'>Edit</a>
+          ${safe(lendingButton(book))}
+          ${safe(deleteButton(book))}
+        </td>
+      </tr>
+      `
+  end
+
+  badge : Book -> String
+  let badge(book) do
+    book.borrowed? then html$`<span class='loan'>On loan</span>` else html$`On the shelf`
+  end
+
+  # Borrowing and returning are state changes, so they are buttons in a POST
+  # form rather than links a crawler could follow.
+  lendingButton : Book -> String
+  let lendingButton(book) do
+    let path = book.borrowed? then "return" else "borrow"
+    let label = book.borrowed? then "Return" else "Borrow"
+    html$`<form class='inline' method='post' action='/books/${book.id}/${path}'>
+      <button type='submit'>${label}</button>
+    </form>`
+  end
+
+  deleteButton : Book -> String
+  let deleteButton(book) do
+    html$`<form class='inline' method='post' action='/books/${book.id}/delete'>
+      <button type='submit'>Delete</button>
+    </form>`
+  end
+
+  banner : String? -> String
+  let banner(notice) do
+    match notice do
+      Just(message) => html$`<p class='banner'>${message}</p>`
+      None => ""
+    end
+  end
+
+  errorList : [String] -> String
+  let errorList(errors) do
+    let items = errors.map { |message| html$`<li>${message}</li>` }.join("")
+    errors.empty? then "" else html$`<ul class='errors'>${safe(items)}</ul>`
+  end
+
+  clearSearch : String -> String
+  let clearSearch(term) do
+    term.trim.empty? then "" else html$`<a href='/books'>Clear</a>`
+  end
+
+  emptyState : String -> String
+  let emptyState(term) do
+    let blank = "The catalogue is empty. Add the first book."
+    let message = term.trim.empty? then blank else "No book matches that search."
+    html$`<p class='empty'>${message}</p>`
+  end
+
+  summary : [Book] -> String -> String
+  let summary(books, term) do
+    let counted = books.count == 1 then "1 book" else "${books.count} books"
+    let scope = term.trim.empty? then "" else " matching “${term.trim}”"
+    "${counted}${scope}, ${books.count { |book| book.borrowed? }} on loan"
+  end
+end

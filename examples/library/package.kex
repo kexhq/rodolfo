@@ -1,0 +1,13 @@
+# An example you can run as a package: it depends on Rodolfo the way any
+# consumer would — resolved from Git by Tey, not from this checkout.
+bundle "library" do
+  version("0.1.0")
+  description("Rodolfo example: a book-management CRUD interface")
+  kex(">= 0.4.0-beta")
+  license("MIT")
+
+  entrypoint("src/main.kex")
+
+  # Depend on the named release, drifted forward by tey update.
+  tey("rodolfo", git: "https://github.com/kexhq/rodolfo", tag: "~> 0.1")
+end

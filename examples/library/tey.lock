@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "kex": {"requirement": ">= 0.4.0-beta", "version": "0.4.0-beta"},
+  "otp": {"requirement": "", "release": 29},
+  "deps": {
+    "rodolfo": {"git": "https://github.com/kexhq/rodolfo", "resolved": "v0.1.0", "commit": "172e9fc29fddec5c5580b1a5ac3c2ecefc15a00d", "sha256": "a06528b4d61f2bef772e0b1d84378e9556f0c1846adca2d7bb6262a9595633a7", "groups": []}
+  }
+}

@@ -1,0 +1,139 @@
+# The pages are pure functions from books to strings, so what they escape and
+# what they say is checked here rather than in a browser.
+using Catalog, only: [Book, Draft]
+
+let shelved(id: Integer, title: String, author: String, year: Integer) -> Book do
+  Book { id: id, title: title, author: author, year: year }
+end
+
+let dune() -> Book do
+  shelved(1, "Dune", "Frank Herbert", 1965)
+end
+
+describe("Views.escape") do
+  it("replaces the characters that would end an element or an attribute") do
+    assert(Views.escape("<b>") == "&lt;b&gt;")
+    assert(Views.escape("Tom & Jerry") == "Tom &amp; Jerry")
+    assert(Views.escape("\"quoted\"") == "&quot;quoted&quot;")
+    assert(Views.escape("O'Neil") == "O&#39;Neil")
+  end
+
+  it("escapes an ampersand once, not twice") do
+    assert(Views.escape("&lt;") == "&amp;lt;")
+  end
+end
+
+describe("Views.index") do
+  it("escapes a title that looks like markup") do
+    let hostile = shelved(1, "<script>alert('x')</script>", "Anon", 2020)
+    let page = Views.index([hostile], "", None)
+    assert(page.contains?("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"))
+    assert(page.contains?("<script>alert").falsy?)
+  end
+
+  it("escapes the search term it echoes back into the box") do
+    let page = Views.index([], "\" onfocus=\"steal()", None)
+    assert(page.contains?("&quot; onfocus=&quot;steal()"))
+    assert(page.contains?("\" onfocus=\"steal()").falsy?)
+  end
+
+  it("counts the books and the ones on loan") do
+    let books = Catalog.lending([dune(), shelved(2, "Emma", "Jane Austen", 1815)], 2, true)
+    assert(Views.index(books, "", None).contains?("2 books, 1 on loan"))
+  end
+
+  it("says one book in the singular") do
+    assert(Views.index([dune()], "", None).contains?("1 book, 0 on loan"))
+  end
+
+  it("names the search term in the count and offers to clear it") do
+    let page = Views.index([dune()], "dune", None)
+    assert(page.contains?("matching “dune”"))
+    assert(page.contains?("<a href='/books'>Clear</a>"))
+  end
+
+  it("explains an empty catalogue and an empty search differently") do
+    assert(Views.index([], "", None).contains?("The catalogue is empty."))
+    assert(Views.index([], "kex", None).contains?("No book matches that search."))
+  end
+
+  it("shows a notice only when there is one") do
+    assert(Views.index([dune()], "", Just("Book added.")).contains?("class='banner'>Book added."))
+    assert(Views.index([dune()], "", None).contains?("class='banner'").falsy?)
+  end
+
+  it("links each row to the book and its actions") do
+    let page = Views.index([dune()], "", None)
+    assert(page.contains?("<a href='/books/1'>Dune</a>"))
+    assert(page.contains?("action='/books/1/borrow'"))
+    assert(page.contains?("action='/books/1/delete'"))
+  end
+end
+
+describe("Views.show") do
+  it("offers to borrow a book that is on the shelf") do
+    let page = Views.show(dune(), None)
+    assert(page.contains?("On the shelf"))
+    assert(page.contains?("action='/books/1/borrow'"))
+  end
+
+  it("offers to return a book that is on loan") do
+    let lent = Book { ...dune(), borrowed?: true }
+    let page = Views.show(lent, None)
+    assert(page.contains?("On loan"))
+    assert(page.contains?("action='/books/1/return'"))
+  end
+end
+
+describe("Views.form") do
+  it("posts to the action it is given and fills the draft in") do
+    let draft = Draft { title: "Dune", author: "Frank Herbert", year: "1965" }
+    let page = Views.form("Edit this book", "/books/1", draft, [])
+    assert(page.contains?("action='/books/1'"))
+    assert(page.contains?("name='title' value='Dune'"))
+    assert(page.contains?("name='year' value='1965'"))
+  end
+
+  it("lists the errors a submission came back with") do
+    let page = Views.form("Add a book", "/books", Draft {}, ["Title is required."])
+    assert(page.contains?("<ul class='errors'><li>Title is required.</li></ul>"))
+  end
+
+  it("shows no error list on a first visit") do
+    assert(Views.form("Add a book", "/books", Draft {}, []).contains?("class='errors'").falsy?)
+  end
+
+  it("escapes a value the browser sent back") do
+    let draft = Draft { title: "' onload='steal()", author: "", year: "" }
+    let page = Views.form("Add a book", "/books", draft, [])
+    assert(page.contains?("value='&#39; onload=&#39;steal()'"))
+  end
+end
+
+describe("Views.page") do
+  it("wraps a body in a complete document") do
+    let page = Views.missing("No book carries that id.")
+    assert(page.contains?("<!doctype html>"))
+    assert(page.contains?("<title>Not found · Rodolfo Library</title>"))
+    assert(page.contains?("<a class='brand' href='/books'>Rodolfo Library</a>"))
+  end
+
+  it("passes the stylesheet through unescaped") do
+    assert(Views.missing("gone").contains?("<style>:root {"))
+  end
+end
+
+describe("Views.noticeText") do
+  it("turns a redirect's code into prose") do
+    assert(Views.noticeText("created") == Just("Book added."))
+    assert(Views.noticeText("updated") == Just("Changes saved."))
+    assert(Views.noticeText("deleted") == Just("Book removed."))
+    assert(Views.noticeText("lent") == Just("Book marked as on loan."))
+    assert(Views.noticeText("returned") == Just("Book back on the shelf."))
+  end
+
+  it("ignores a code it does not know, so a URL cannot write the page") do
+    assert(Views.noticeText("<script>alert('x')</script>").none?)
+    assert(Views.noticeText("").none?)
+  end
+end
