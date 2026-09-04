@@ -21,9 +21,7 @@ record Draft do
   year : String = ""
 end
 
-# The oldest book the catalogue accepts, and the newest. Kex 0.4.0-beta only
-# resolves a module's own value bindings through the module name, so these are
-# spelled `Catalog.earliestYear` even inside `Catalog`.
+# The oldest book the catalogue accepts, and the newest.
 earliestYear : Integer
 let earliestYear = 1450
 
@@ -42,7 +40,7 @@ end
 # `validate` falls back to `earliestYear` rather than failing here, which is
 # why the routes check the messages first.
 yearOf : Draft -> Integer
-let yearOf(draft) = draft.year.trim.to(Integer).or(Catalog.earliestYear)
+let yearOf(draft) = draft.year.trim.to(Integer).or(earliestYear)
 
 # Turns a stored book back into the draft an edit form starts from.
 drafted : Book -> Draft
@@ -118,7 +116,7 @@ end
 private do
   yearErrors : String -> [String]
   let yearErrors(text) do
-    let range = "between ${Catalog.earliestYear} and ${Catalog.latestYear}"
+    let range = "between ${earliestYear} and ${latestYear}"
     match text.trim.to(Integer) do
       None => ["Year must be a whole number."]
       Just(value) => inRange?(value) then [] else ["Year must be ${range}."]
@@ -126,7 +124,7 @@ private do
   end
 
   inRange? : Integer -> Bool
-  let inRange?(value) = value >= Catalog.earliestYear && value <= Catalog.latestYear
+  let inRange?(value) = value >= earliestYear && value <= latestYear
 
   matches? : Book -> String -> Bool
   let matches?(book, term) do
@@ -159,7 +157,7 @@ private do
       id: bookId,
       title: title,
       author: author,
-      year: year.trim.to(Integer).or(Catalog.earliestYear),
+      year: year.trim.to(Integer).or(earliestYear),
       borrowed?: lent.trim == "1"
     }
     bookId == 0 then None else Just(book)

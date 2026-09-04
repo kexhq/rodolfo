@@ -21,28 +21,28 @@ foul catalogueFile = ENV.get("LIBRARY_FILE").or("books.tsv")
 # on the shelf either way.
 opened : [Draft] -> [Book]
 foul opened(drafts) do
-  let fresh? = FS.File.exists?(Shelf.catalogueFile).falsy?
-  fresh? then Shelf.stocked(drafts) else Shelf.books
+  let fresh? = FS.File.exists?(catalogueFile).falsy?
+  fresh? then stocked(drafts) else books
 end
 
 # Every book, newest first.
 books : [Book]
-foul books = Catalog.sorted(Catalog.decoded(FS.File.read(Shelf.catalogueFile).or("")))
+foul books = Catalog.sorted(Catalog.decoded(FS.File.read(catalogueFile).or("")))
 
 # The books matching a search term; every book when the term is empty.
 matching : String -> [Book]
-foul matching(term) = Catalog.matching(Catalog.decoded(FS.File.read(Shelf.catalogueFile).or("")), term)
+foul matching(term) = Catalog.matching(Catalog.decoded(FS.File.read(catalogueFile).or("")), term)
 
 # One book, or `None` when no book carries that id.
 find : Integer -> Book?
-foul find(id) = Catalog.withId(Shelf.books, id)
+foul find(id) = Catalog.withId(books, id)
 
 # Files a validated draft and returns the id it was given.
 filed : Draft -> Integer
 foul filed(draft) do
-  let books = Shelf.books
-  let id = Catalog.nextId(books)
-  Shelf.kept(Catalog.added(books, id, draft))
+  let current = books
+  let id = Catalog.nextId(current)
+  kept(Catalog.added(current, id, draft))
   id
 end
 
@@ -50,35 +50,35 @@ end
 # `None` when the id is unknown.
 rewritten : Integer -> Draft -> Book?
 foul rewritten(id, draft) do
-  let books = Catalog.edited(Shelf.books, id, draft)
-  Shelf.kept(books)
-  Catalog.withId(books, id)
+  let current = Catalog.edited(books, id, draft)
+  kept(current)
+  Catalog.withId(current, id)
 end
 
 # Removes a book, returning whether there was one to remove.
 dropped : Integer -> Bool
 foul dropped(id) do
-  let books = Shelf.books
-  Shelf.kept(Catalog.without(books, id))
-  Catalog.withId(books, id).set?
+  let current = books
+  kept(Catalog.without(current, id))
+  Catalog.withId(current, id).set?
 end
 
 # Lends a book out or takes it back, returning the stored book.
 lent : Integer -> Bool -> Book?
 foul lent(id, borrowed?) do
-  let books = Catalog.lending(Shelf.books, id, borrowed?)
-  Shelf.kept(books)
-  Catalog.withId(books, id)
+  let current = Catalog.lending(books, id, borrowed?)
+  kept(current)
+  Catalog.withId(current, id)
 end
 
 # Replaces the catalogue file with `books`.
 kept : [Book] -> Bool
-foul kept(books) = FS.File.write(Shelf.catalogueFile, Catalog.encoded(books))
+foul kept(books) = FS.File.write(catalogueFile, Catalog.encoded(books))
 
 # Writes a catalogue built from `drafts`, numbering them from one.
 stocked : [Draft] -> [Book]
 foul stocked(drafts) do
-  let books = drafts.reduce([]) { |shelved, draft| Catalog.added(shelved, Catalog.nextId(shelved), draft) }
-  Shelf.kept(books)
-  Catalog.sorted(books)
+  let seeded = drafts.reduce([]) { |shelved, draft| Catalog.added(shelved, Catalog.nextId(shelved), draft) }
+  kept(seeded)
+  Catalog.sorted(seeded)
 end

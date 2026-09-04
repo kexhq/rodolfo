@@ -185,13 +185,13 @@ private do
   end
 
   # Escapes anything a template interpolates, except markup this module has
-  # already vouched for. A template hole arrives as `Any`, and Kex 0.4.0-beta
-  # cannot pattern-match an imported record through `Any`, so the check
-  # compares types — `Safe` shows as its own markup, everything else escapes.
+  # already vouched for.
   render : Any -> String
   let render(value) do
-    let vouched? = Type.of(value) == Type.of(safe(""))
-    vouched? then "${value}" else escape("${value}")
+    match value do
+      Safe { markup } => markup
+      _ => escape("${value}")
+    end
   end
 
   row : Book -> String

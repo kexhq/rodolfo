@@ -7,6 +7,7 @@
 # them (pure), `shelf.kex` keeps them in a file between requests, `views.kex`
 # renders escaped HTML, and this file maps HTTP onto the three.
 using Rodolfo
+using Net.HTTP, only: [Headers, Response]
 using Catalog, only: [Book, Draft]
 
 # The books the catalogue opens with, written on the first run so the first
@@ -19,22 +20,21 @@ let opening = [
 ]
 
 # Sends markup as an HTML document. `Headers.from` builds the whole collection
-# at once: in Kex 0.4.0-beta the chained `Headers.empty.set(...)` form only
-# dispatches inside a route block, not from a top-level helper like this one.
-foul markup(status: Integer, body: String) -> Net.HTTP.Response<Binary> do
-  let headers = Net.HTTP.Headers.from([("Content-Type", "text/html; charset=utf-8")]).try
-  Net.HTTP.Response.binary(status, body.to(Binary).try, headers)
+# at once.
+foul markup(status: Integer, body: String) -> Response<Binary> do
+  let headers = Headers.from([("Content-Type", "text/html; charset=utf-8")]).try
+  Response.binary(status, body.to(Binary).try, headers)
 end
 
 # Answers a form submission by sending the browser somewhere to GET, so a
 # reload never repeats the change.
-foul seeOther(location: String) -> Net.HTTP.Response<Binary> do
-  let headers = Net.HTTP.Headers.from([("Location", location)]).try
-  Net.HTTP.Response.binary(303, Binary.empty, headers)
+foul seeOther(location: String) -> Response<Binary> do
+  let headers = Headers.from([("Location", location)]).try
+  Response.binary(303, Binary.empty, headers)
 end
 
 # Renders a book that may not exist, with one 404 page for every route.
-foul withBook(book: Book?, render: Book -> Net.HTTP.Response<Binary>) -> Net.HTTP.Response<Binary> do
+foul withBook(book: Book?, render: Book -> Response<Binary>) -> Response<Binary> do
   match book do
     Just(found) => render(found)
     None => markup(404, Views.missing("No book carries that id."))
@@ -166,8 +166,8 @@ main do
     # The same delete for `curl -X DELETE`: no page to render, so 204.
     respond "DELETE", "/books/:id" do |env|
       match Shelf.dropped(bookId(env)) do
-        true => Net.HTTP.Response.empty(204)
-        false => Net.HTTP.Response.empty(404)
+        true => Response.empty(204)
+        false => Response.empty(404)
       end
     end
   end.try
