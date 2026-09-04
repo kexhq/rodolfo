@@ -1,6 +1,6 @@
 # Rodolfo
 
-Rodolfo is a tiny Kemal- and Sinatra-inspired microframework for Kex. A router
+Rodolfo is a tiny [Sinatra](https://sinatrarb.com/)-inspired microframework for Kex. A router
 is a block of HTTP verbs — Kex's `Block<[A]>` collection blocks turn the route
 list into a plain do...end body instead of an explicit array, which keeps the
 `DSL` comletely immutable:
@@ -66,11 +66,11 @@ so the usual case is a body and nothing else:
 | `Response.Redirect { location }` | a `Location` header | 302 |
 
 ```rb
-get "/health" do |_|
+get "/health" do
   Response.JSON { body: JSON.stringify({ "status": "ok" }) }
 end
 
-post "/things" do |_|
+post "/things" do
   Response.Text {
     status: 201,
     body: "made",
@@ -136,27 +136,10 @@ let port = server.localAddress.port.value
 serving it by hand or mounting it elsewhere, and `site.routes` is the compiled
 route list in declaration order.
 
-## Two names to watch
-
-Kex resolves a method call against every function in scope, so `using Rodolfo`
-puts two of its names in the way of stdlib ones (kexhq/kex#272):
-
-- `headers.get("Content-Type")` resolves to Rodolfo's `get` verb. Reach the
-  header through `headers.getAll(name).first` instead.
-- `using Net.HTTP` unqualified brings in a second `Response` and a `Router`
-  whose make-methods share the verbs' names. Import it selectively —
-  `using Net.HTTP, only: [Client, Server, ServerOptions, Headers]` — or write
-  `Net.HTTP.Response` in full.
-
-Named arguments do not survive a package boundary on a make-method, so it is
-`site.start(3000)` rather than `site.start(port: 3000)` from a package that
-depends on Rodolfo.
-
 ## Examples
 
-Each example is itself a Kex package that depends on this library the way an
-outside consumer would — through Tey, resolved from the Git repository, not
-from this checkout:
+Each example is a Kex package of its own, using Rodolfo exactly the way an
+application would:
 
 - `examples/hello` — dynamic parameters and request bodies
 - `examples/statusapi` — JSON health and catalog API, with a rescued route
@@ -164,6 +147,12 @@ from this checkout:
 - `examples/requestinfo` — reusable route-handler wrapping
 - `examples/library` — a book-management CRUD interface: list, search, add,
   edit, delete, lend, and return, in plain HTML forms
+
+![The library example's catalogue page](examples/library/screenshot.png)
+
+The catalogue above is what `examples/library` serves on the first run: the
+opening books from `mock_data.kex`, escaped through `html$`, with the search
+box, the status pills, and the row actions the rest of the example implements.
 
 The examples are workspace members, so they resolve Rodolfo from this checkout
 rather than from a published tag — one `tey install` at the root covers them:
