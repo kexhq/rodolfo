@@ -1,0 +1,79 @@
+# The replies a route block can return when a bare +String+ or an ``html$``
+# literal is not enough.
+#
+# Each record carries a status that defaults to the sensible one for its kind
+# and headers that default to none, so the common case names a body and nothing
+# else: +Response.JSON { body }+. A reply's own +Content-Type+ always wins; the
+# record's kind only fills the gap.
+module Rodolfo.Response
+
+using Net.HTTP, only: [Headers]
+
+# A JSON body, sent as +application/json+.
+#
+# @example A health endpoint
+#   Response.JSON { body: JSON.stringify({ "status": "ok" }) }
+record JSON do
+  status : Integer = 200
+  body : String
+  headers : Headers = Net.HTTP.Headers.empty
+end
+
+# A UTF-8 body, sent as +text/plain; charset=utf-8+.
+#
+# @example Created, with a header of its own
+#   Response.Text {
+#     status: 201,
+#     body: "made",
+#     headers: Net.HTTP.Headers.from([("X-Created-By", "rodolfo")]).try
+#   }
+record Text do
+  status : Integer = 200
+  body : String
+  headers : Headers = Net.HTTP.Headers.empty
+end
+
+# A UTF-8 body, sent as +text/html; charset=utf-8+.
+#
+# Returning an ``html$`...` `` literal does the same thing with less ceremony;
+# reach for this when the page needs a status or headers as well.
+#
+# @example A 404 page
+#   Response.HTML { status: 404, body: "${Views.missing("No such book.")}" }
+record HTML do
+  status : Integer = 200
+  body : String
+  headers : Headers = Net.HTTP.Headers.empty
+end
+
+# Bytes with a content type of your choosing — an image, an archive, a
+# protocol buffer.
+#
+# @example Serving a generated PNG
+#   Response.Raw { body: png, contentType: "image/png" }
+record Raw do
+  status : Integer = 200
+  body : Binary
+  contentType : String = "application/octet-stream"
+  headers : Headers = Net.HTTP.Headers.empty
+end
+
+# A body-less reply: 204 after a successful delete, 304 for a fresh cache.
+#
+# @example
+#   Response.Empty {}              # 204
+#   Response.Empty { status: 404 }
+record Empty do
+  status : Integer = 204
+  headers : Headers = Net.HTTP.Headers.empty
+end
+
+# A +Location+ redirect; 302 unless you ask for 301, 303, 307, or 308.
+#
+# @example Answering a form submission with somewhere to GET
+#   Response.Redirect { status: 303, location: "/books" }
+record Redirect do
+  location : String
+  status : Integer = 302
+  headers : Headers = Net.HTTP.Headers.empty
+end

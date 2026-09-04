@@ -5,23 +5,23 @@ let page(title: String, content: String) -> String do
 end
 
 main do
-  run do
-    respond "GET", "/" do |_|
-      let html = page(
-        "Rodolfo Books",
-        "<h1>Independent books</h1><p>Small catalogue, big ideas.</p>"
-      )
-      let headers = Net.HTTP.Headers.empty
-        .set("Content-Type", "text/html; charset=utf-8")
-      Net.HTTP.Response.binary(200, html.to(Binary).try, headers)
+  let site = Rodolfo.router do
+    get "/" do |_|
+      Response.HTML {
+        body: page(
+          "Rodolfo Books",
+          "<h1>Independent books</h1><p>Small catalogue, big ideas.</p>"
+        )
+      }
     end
 
-    respond "GET", "/authors/:name" do |env|
+    get "/authors/:name" do |env|
       let name = env.param("name").try
-      let html = page(name, "<h1>${name}</h1><p>Author profile</p>")
-      let headers = Net.HTTP.Headers.empty
-        .set("Content-Type", "text/html; charset=utf-8")
-      Net.HTTP.Response.binary(200, html.to(Binary).try, headers)
+      Response.HTML {
+        body: page(name, "<h1>${name}</h1><p>Author profile</p>")
+      }
     end
-  end.try
+  end
+
+  site.start(3000).try
 end

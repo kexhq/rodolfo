@@ -1,10 +1,94 @@
 # A tiny Kemal- and Sinatra-inspired web framework built on Kex's HTTP server.
+#
+# A router is a block of HTTP verbs; nothing binds a socket until you +start+
+# it:
+#
+# @example
+#   using Rodolfo
+#
+#   main do
+#     let site = Rodolfo.router do
+#       get "/" do 
+#        "Hello from Kex!"
+#       end
+#
+#       get "/hello/:name" do |env|
+#         let name = env.param("name").or("world")
+#         "Hello, ${name}!"
+#       end
+#     end
+#
+#     site.start(3000).try
+#   end
+#
+# The reply records live in +Rodolfo.Response+ and the escaping in
+# +Rodolfo.Markup+; both are re-exported here, so one `using Rodolfo` brings
+# the whole DSL — the verbs, `Response.*`, and the ``html$`` and ``rawHTML$``
+# tags.
 module Rodolfo
 
-using Net.HTTP
+# `Response` below is Rodolfo's own — the reply a route block returns — so
+# Net.HTTP arrives selectively and its response constructors stay qualified.
+using Net.HTTP, only: [Request, Context, Headers, Route, Server, ServerOptions]
 using Net.Socket
+using URI, only: [URI, Form]
+using Rodolfo.Markup
+using Rodolfo.Response
 
-# The request environment passed to compact route blocks.
+# Markup that is already escaped — see +Rodolfo.Markup+.
+type Safe = Rodolfo.Markup.Safe
+
+# Escapes the five characters that would end an element, an attribute, or the
+# document. Re-exported from +Rodolfo.Markup+.
+#
+# @param text [String] the text to escape
+# @return [String] the escaped text
+escape : String -> String
+let escape(text) = Rodolfo.Markup.escape(text)
+
+# Vouches for a string as markup. Re-exported from +Rodolfo.Markup+.
+#
+# @param markup [String] text to treat as markup, escaping nothing
+# @return [Safe] the string, trusted
+safe : String -> Safe
+let safe(markup) = Rodolfo.Markup.safe(markup)
+
+# Concatenates rendered markup into one +Safe+. Re-exported from
+# +Rodolfo.Markup+.
+#
+# @param pieces [[Safe]] the markup to join, in order
+# @return [Safe] the pieces, concatenated
+joined : [Safe] -> Safe
+let joined(pieces) = Rodolfo.Markup.joined(pieces)
+
+# The ``html$`` tag, escaping every hole. Re-exported from +Rodolfo.Markup+.
+#
+# @param parts [[String]] the literal's fixed text
+# @param values [[Any]] the interpolated values
+# @return [Safe] the assembled markup
+#
+# @example
+#   html$`<p>${untrusted}</p>`
+html : [String] -> [Any] -> Safe
+let html(parts, values) = Rodolfo.Markup.html(parts, values)
+
+# The ``rawHTML$`` tag, escaping nothing. Re-exported from +Rodolfo.Markup+.
+#
+# @param parts [[String]] the literal's fixed text
+# @param values [[Any]] the interpolated values, inserted verbatim
+# @return [Safe] the assembled markup, unescaped
+#
+# @example
+#   rawHTML$`<style>${stylesheet}</style>`
+rawHTML : [String] -> [Any] -> Safe
+let rawHTML(parts, values) = Rodolfo.Markup.rawHTML(parts, values)
+
+# The request environment passed to route blocks.
+#
+# Declared here rather than in a submodule on purpose: the prelude also exports
+# an +Env+ (+Mock.Env+), and a bare +Env+ in an application's annotation
+# resolves to that one unless this record is declared in the module the
+# application imports.
 record Env do
   request : Request<Binary>
   context : Context
@@ -12,89 +96,357 @@ end
 
 make Env do
   # Returns a named or wildcard route parameter.
+  #
+  # @param name [String] the +:name+ or wildcard from the route's path
+  # @return [Result<String, NetError>] the captured text, or +Parse+
+  #
+  # @example
+  #   get "/books/:id" do |env| env.param("id").try end
   param :> String -> Result<String, NetError>
   let param(name) = @context.route.parameter(name)
+
+  # Returns a query-string field, or +None+ when the URL carries no such name.
+  #
+  # A browser submits a GET form as +application/x-www-form-urlencoded+, where
+  # a space travels as `+` — so +?q=and+tools+ reads back as "and tools". That
+  # is why this decodes the raw query rather than reading +target.query+, whose
+  # RFC 3986 rules leave `+` as a literal plus.
+  #
+  # @param name [String] the field to read
+  # @return [String?] its decoded value, or +None+
+  #
+  # @example
+  #   let term = env.query("q").or("")
+  query :> String -> String?
+  let query(name) = field(queryFields(this), name)
+
+  # Every query-string field, in the order the URL carries them.
+  #
+  # A field written without +=+ has no value.
+  #
+  # @return [[(String, String?)]] the decoded fields, in order
+  queryFields :> [(String, String?)]
+  let queryFields = decodedFields(queryText(@request.target.string))
+
+  # Returns a field of an +application/x-www-form-urlencoded+ request body —
+  # what an HTML form POSTs.
+  #
+  # @param name [String] the field to read
+  # @return [String?] its decoded value, or +None+
+  #
+  # @example
+  #   let title = env.form("title").or("")
+  form :> String -> String?
+  let form(name) = field(this.formFields, name)
+
+  # Every submitted body field, in order.
+  #
+  # @return [[(String, String?)]] the decoded fields, in order
+  formFields :> [(String, String?)]
+  let formFields = decodedFields(@request.body.to(String).or(""))
 end
 
-# A compact route block whose string result becomes a 200 text response.
-type Handler = Env -> String
+# Everything a route block may return.
+#
+# +Safe+ is here because markup is a reply in its own right: returning an
+# ``html$`...` `` literal from a route sends it as a 200 text/html page. A
+# plain +String+ becomes a 200 text/plain body, which is what makes
+# +do |_| "hello" end+ a complete route.
+type Reply = String
+  | Rodolfo.Markup.Safe
+  | Rodolfo.Response.JSON
+  | Rodolfo.Response.Text
+  | Rodolfo.Response.HTML
+  | Rodolfo.Response.Raw
+  | Rodolfo.Response.Empty
+  | Rodolfo.Response.Redirect
 
-# A route block that controls the complete HTTP response.
-type ResponseHandler = Env -> Response<Binary>
+# A route block: the request environment in, a reply out.
+type Handler = Env -> Reply
 
 # One declaration in a Rodolfo route list.
-type Definition = TextRoute(String, String, Handler)
-  | FullRoute(String, String, ResponseHandler)
+record Definition do
+  method : String
+  path : String
+  handler : Handler
+end
 
+# Declares a route for any HTTP method.
+#
+# The named verbs below cover the usual ones; reach for this when the method is
+# unusual or computed.
+#
+# @param method [String] the HTTP method, uppercase
+# @param path [String] the route path, with +:name+ captures
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
+#
+# @example
+#   route "PROPFIND", "/files" do |_| Response.Empty {} end
 route : String -> String -> Handler -> Definition
-let route(method, path, handler) = TextRoute(method, path, handler)
+let route(method, path, handler) = Definition {
+  method: method,
+  path: path,
+  handler: handler
+}
 
+# Declares a +GET+ route.
+#
+# @param path [String] the route path, with +:name+ captures
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
+#
+# @example
+#   get "/hello/:name" do |env| "Hello, ${env.param("name").try}!" end
 get : String -> Handler -> Definition
 let get(path, handler) = route("GET", path, handler)
 
+# Declares a +POST+ route.
+#
+# @param path [String] the route path
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
 post : String -> Handler -> Definition
 let post(path, handler) = route("POST", path, handler)
 
+# Declares a +PUT+ route.
+#
+# @param path [String] the route path
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
 put : String -> Handler -> Definition
 let put(path, handler) = route("PUT", path, handler)
 
+# Declares a +PATCH+ route.
+#
+# @param path [String] the route path
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
 patch : String -> Handler -> Definition
 let patch(path, handler) = route("PATCH", path, handler)
 
+# Declares a +DELETE+ route.
+#
+# @param path [String] the route path
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
 delete : String -> Handler -> Definition
 let delete(path, handler) = route("DELETE", path, handler)
 
-respond : String -> String -> ResponseHandler -> Definition
-let respond(method, path, handler) = FullRoute(method, path, handler)
+# Declares a +HEAD+ route.
+#
+# @param path [String] the route path
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
+head : String -> Handler -> Definition
+let head(path, handler) = route("HEAD", path, handler)
+
+# Declares an +OPTIONS+ route.
+#
+# @param path [String] the route path
+# @param handler [Handler] the route block
+# @return [Definition] the declaration
+options : String -> Handler -> Definition
+let options(path, handler) = route("OPTIONS", path, handler)
+
+# A route list, ready to serve. Nothing is bound until you +start+ it.
+record Router do
+  definitions : [Definition]
+end
+
+# Collects a block of route declarations into a router.
+#
+# Declaration order decides matches, so a fixed path goes before the capture
+# that would also match it.
+#
+# @param definitions [Block<[Definition]>] the route declarations
+# @return [Router] the collected routes
+#
+# @example
+#   let api = Rodolfo.router do
+#     get "/books/me" do |_| "me" end
+#     get "/books/:id" do |env| env.param("id").try end
+#   end
+router : Block<[Definition]> -> Router
+let router(definitions) = Router { definitions: definitions() }
+
+make Router do
+  # The Net.HTTP router these declarations compile to, for the rare caller
+  # that wants to serve it by hand or mount it somewhere else.
+  #
+  # @return [Net.HTTP.Router] the compiled router
+  httpRouter :> Net.HTTP.Router
+  foul httpRouter = compileRoutes(@definitions)
+
+  # The compiled routes, in declaration order.
+  #
+  # @return [[Route]] the routes, as declared
+  routes :> [Route]
+  foul routes = this.httpRouter.routes
+
+  # Serves forever on loopback, on port 3000.
+  #
+  # @return [Result<Void, NetError>] never returns while serving
+  start :> Result<Void, NetError>
+  foul start do
+    Server.serve(addressed("127.0.0.1", 3000).try, this.httpRouter)
+  end
+
+  # Serves forever on loopback, on the given port.
+  #
+  # Loopback is the default because a port bound on every interface is
+  # reachable by every machine on the network, which is rarely what a program
+  # under development means. Answering beyond this machine is the two-argument
+  # form below, where the address is written out.
+  #
+  # @param port [Integer] the port to bind
+  # @return [Result<Void, NetError>] never returns while serving
+  start :> Integer -> Result<Void, NetError>
+  foul start(port: Integer) do
+    Server.serve(addressed("127.0.0.1", port).try, this.httpRouter)
+  end
+
+  # Serves forever on the given address.
+  #
+  # +"0.0.0.0"+ answers on every interface, one interface's address answers
+  # only on that one, and a hostname is resolved. Port 0 asks the operating
+  # system for a free port.
+  #
+  # @param host [String] the address or hostname to bind
+  # @param port [Integer] the port to bind, or 0 for any free one
+  # @return [Result<Void, NetError>] never returns while serving
+  #
+  # @example
+  #   site.start("0.0.0.0", 3000).try     # reachable from the network
+  #   site.start("127.0.0.1", 0).try      # this machine, OS picks the port
+  start :> String -> Integer -> Result<Void, NetError>
+  foul start(host: String, port: Integer) do
+    Server.serve(addressed(host, port).try, this.httpRouter)
+  end
+
+  # Serves forever on the given address, with explicit server limits.
+  #
+  # @param host [String] the address or hostname to bind
+  # @param port [Integer] the port to bind
+  # @param options [ServerOptions] handler count, backlog, graceful shutdown
+  # @return [Result<Void, NetError>] never returns while serving
+  start :> String -> Integer -> ServerOptions -> Result<Void, NetError>
+  foul start(host: String, port: Integer, options: ServerOptions) do
+    Server.serve(addressed(host, port).try, this.httpRouter, options)
+  end
+
+  # Starts the router in the background on loopback and hands back a handle to
+  # stop it — what specs and managed lifecycles want instead of a blocking
+  # +start+.
+  #
+  # @param port [Integer] the port to bind, or 0 for any free one
+  # @return [Result<Server.Running, NetError>] the running server
+  #
+  # @example Taking an ephemeral port in a spec
+  #   let server = site.background(0).try
+  #   let port = server.localAddress.port.value
+  background :> Integer -> Result<Server.Running, NetError>
+  foul background(port: Integer) do
+    Server.start(addressed("127.0.0.1", port).try, this.httpRouter)
+  end
+
+  # Starts in the background on the given address.
+  #
+  # @param host [String] the address or hostname to bind
+  # @param port [Integer] the port to bind, or 0 for any free one
+  # @return [Result<Server.Running, NetError>] the running server
+  background :> String -> Integer -> Result<Server.Running, NetError>
+  foul background(host: String, port: Integer) do
+    Server.start(addressed(host, port).try, this.httpRouter)
+  end
+
+  # Starts in the background on the given address, with explicit limits.
+  #
+  # @param host [String] the address or hostname to bind
+  # @param port [Integer] the port to bind
+  # @param options [ServerOptions] handler count, backlog, graceful shutdown
+  # @return [Result<Server.Running, NetError>] the running server
+  background :> String -> Integer -> ServerOptions -> Result<Server.Running, NetError>
+  foul background(host: String, port: Integer, options: ServerOptions) do
+    Server.start(addressed(host, port).try, this.httpRouter, options)
+  end
+end
 
 private do
-  addRoute : Router -> Definition -> Router
-  let addRoute(router, TextRoute(method, path, handler)) do
-    router.route(method, path) do |request, context|
-      Response.text(200, handler(Env { request: request, context: context }))
+  # Everything after the first `?`, which is the whole query — only the first
+  # one delimits, and a fragment never reaches a server.
+  queryText : String -> String
+  let queryText(target) = target.split("?").drop(1).join("?")
+
+  decodedFields : String -> [(String, String?)]
+  let decodedFields(text) = Form.parse(text).map { |form| form.entries }.or([])
+
+  field : [(String, String?)] -> String -> String?
+  let field(fields, name) do
+    match fields.find { |entry| match entry do (key, _) => key == name end } do
+      Just((_, value)) => value
+      None => None
     end
   end
-  let addRoute(router, FullRoute(method, path, handler)) do
-    router.route(method, path) do |request, context|
-      handler(Env { request: request, context: context })
+
+  # The port is validated here so a caller writes `start("0.0.0.0", 3000)`
+  # rather than threading a `Net.Port` result of its own.
+  foul addressed(host: String, port: Integer) -> Result<TCP.Endpoint, NetError> do
+    Ok(TCP.Endpoint.host(host, Net.Port.from(port).try))
+  end
+
+  # Foul because the handlers it wraps serve requests, and a closure calling
+  # foul code makes its enclosing context foul.
+  compileRoutes : [Definition] -> Net.HTTP.Router
+  foul compileRoutes(definitions) = Net.HTTP.Router {
+    routes: definitions.map(~compileRoute)
+  }
+
+  compileRoute : Definition -> Route
+  foul compileRoute(definition: Definition) = Route {
+    method: definition.method,
+    path: definition.path,
+    handler: do |request, context|
+      respond(definition.handler(Env { request: request, context: context }))
+    end
+  }
+
+  # Turns whatever the route block returned into an HTTP response.
+  foul respond(reply: Reply) -> Net.HTTP.Response<Binary> do
+    match reply do
+      Rodolfo.Markup.Safe { markup } =>
+        textual(200, markup, Headers.empty, "text/html; charset=utf-8")
+      Response.JSON { status, body, headers } =>
+        textual(status, body, headers, "application/json")
+      Response.Text { status, body, headers } =>
+        textual(status, body, headers, "text/plain; charset=utf-8")
+      Response.HTML { status, body, headers } =>
+        textual(status, body, headers, "text/html; charset=utf-8")
+      Response.Raw { status, body, headers, contentType } =>
+        Net.HTTP.Response.binary(status, body, typed(headers, contentType))
+      Response.Empty { status, headers } =>
+        Net.HTTP.Response.binary(status, Binary.empty, headers)
+      Response.Redirect { status, location, headers } =>
+        Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
+      text => Net.HTTP.Response.text(200, "${text}")
     end
   end
 
-  compileRoutes : [Definition] -> Router -> Router
-  let compileRoutes([], router) = router
-  let compileRoutes([definition | rest], router) do
-    compileRoutes(rest, addRoute(router, definition))
+  foul textual(status: Integer, body: String, headers: Headers, contentType: String) -> Net.HTTP.Response<Binary> do
+    Net.HTTP.Response.binary(status, body.to(Binary).try, typed(headers, contentType))
   end
-end
 
-# Compiles a route block into a router without opening a socket.
-build : Block<[Definition]> -> Router
-let build(definitions) = compileRoutes(definitions(), Router.build)
+  # A reply's own `Content-Type` wins; the record's kind only fills the gap.
+  foul typed(headers: Headers, contentType: String) -> Headers do
+    match headers.get("Content-Type") do
+      Just(_) => headers
+      None => appended(headers, "Content-Type", contentType).try
+    end
+  end
 
-# Runs a route block forever on every interface, on port 3000.
-run : Block<[Definition]> -> Result<Void, NetError>
-foul run(definitions) do
-  run(3000, definitions)
-end
-
-# Runs a route block forever on every interface, on the given port.
-run : Integer -> Block<[Definition]> -> Result<Void, NetError>
-foul run(port, definitions) do
-  let endpoint = TCP.Endpoint.any(Net.Port.from(port).try)
-  Server.serve(endpoint, build(definitions))
-end
-
-# Starts a route block asynchronously for tests and managed lifecycles, on
-# port 3000.
-start : Block<[Definition]> -> Result<Server.Running, NetError>
-foul start(definitions) do
-  start(3000, definitions)
-end
-
-# Starts a route block asynchronously for tests and managed lifecycles, on
-# the given port.
-start : Integer -> Block<[Definition]> -> Result<Server.Running, NetError>
-foul start(port, definitions) do
-  let endpoint = TCP.Endpoint.any(Net.Port.from(port).try)
-  Server.start(endpoint, build(definitions))
+  # Appends one field, validating the whole collection. Building it in one
+  # `Headers.from` rather than chaining is what rejects a name or value
+  # carrying a line break, instead of writing an injectable message.
+  appended : Headers -> String -> String -> Result<Headers, NetError>
+  let appended(headers, name, value) = Headers.from([...headers.entries, (name, value)])
 end

@@ -1,0 +1,111 @@
+# Escaping, and the two tagged literals built on it.
+#
+# The rule this module exists to enforce: a `String` reaching a page is escaped,
+# and the only way to opt out is to wrap it in a +Safe+. Both tags hand back a
+# +Safe+, so templates nest without a wrapper and a value that came from a
+# request cannot become markup by accident.
+module Rodolfo.Markup
+
+# Markup that is already escaped.
+#
+# Wrapping is the only way to opt out of escaping, so an unwrapped +String+ can
+# never reach a page as markup.
+record Safe do
+  markup : String
+end
+
+make Safe, implement: Showable do
+  # Interpolating a +Safe+ yields its markup, unchanged.
+  #
+  # @return [String] the markup, with no further escaping
+  let showValue -> String = @markup
+end
+
+# The tag behind an ``html$`...` `` literal: every interpolated value is
+# escaped, except a +Safe+ one, which is markup that was built already.
+#
+# @param parts [[String]] the literal's fixed text, n + 1 of them
+# @param values [[Any]] the interpolated values, n of them
+# @return [Safe] the assembled markup
+#
+# @example Escaping a value that came from a request
+#   html$`<p>${untrusted}</p>`
+#
+# @example Nesting, which needs no wrapper because a tag returns Safe
+#   let row = html$`<td>${book.title}</td>`
+#   html$`<tr>${row}</tr>`
+html : [String] -> [Any] -> Safe
+let html(parts, values) = Safe { markup: interleave(parts, values.map(~rendered)) }
+
+# The tag behind a ``rawHTML$`...` `` literal: nothing is escaped, and the
+# result is trusted markup.
+#
+# For assembling markup you built yourself — a stylesheet, a template joined
+# from `html$` pieces — never for anything that reached you from a request.
+#
+# @param parts [[String]] the literal's fixed text
+# @param values [[Any]] the interpolated values, inserted verbatim
+# @return [Safe] the assembled markup, unescaped
+#
+# @example Embedding a stylesheet this module built
+#   rawHTML$`<style>${stylesheet}</style>`
+rawHTML : [String] -> [Any] -> Safe
+let rawHTML(parts, values) = Safe { markup: interleave(parts, values.map { |value| "${value}" }) }
+
+# Concatenates rendered markup back into one +Safe+.
+#
+# The table rows, list items, or option tags a page builds by mapping over a
+# collection.
+#
+# @param pieces [[Safe]] the markup to join, in order
+# @return [Safe] the pieces, concatenated
+#
+# @example A table body from a list of books
+#   html$`<tbody>${joined(books.map(~row))}</tbody>`
+joined : [Safe] -> Safe
+let joined(pieces) = Safe { markup: pieces.map { |piece| "${piece}" }.join("") }
+
+# Vouches for a string as markup, the escape hatch both tags are built on.
+#
+# @param markup [String] text to treat as markup, escaping nothing
+# @return [Safe] the string, trusted
+safe : String -> Safe
+let safe(markup) = Safe { markup: markup }
+
+# Replaces the five characters that would otherwise end an element, an
+# attribute, or the document.
+#
+# Ampersand goes first, so nothing is encoded twice.
+#
+# @param text [String] the text to escape
+# @return [String] the text, safe in element content and in a quoted attribute
+#
+# @example
+#   escape("<b>")        # => "&lt;b&gt;"
+#   escape("Tom & Jerry") # => "Tom &amp; Jerry"
+escape : String -> String
+let escape(text) do
+  text
+    .replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+    .replace("\"", "&quot;")
+    .replace("'", "&#39;")
+end
+
+private do
+  # Joins n + 1 literal parts with n rendered values.
+  interleave : [String] -> [String] -> String
+  let interleave(parts, values) do
+    parts.zip(values + [""])
+      .map { |pair| match pair do (part, value) => part + value end }
+      .join("")
+  end
+
+  # A +Safe+ value is markup already; everything else is escaped text.
+  rendered : Any -> String
+  let rendered(value) = match value do
+    Safe { markup } => markup
+    other => escape("${other}")
+  end
+end

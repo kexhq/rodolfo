@@ -1,0 +1,29 @@
+# The catalogue a fresh install opens with. `Shelf.opened` writes these on the
+# first run, so the first page is never an empty table; after that the file on
+# disk is the catalogue and this list is not consulted again.
+#
+# Enough books to fill the list, spread across five decades so sorting and the
+# search box have something to do — and a few carrying an apostrophe, an
+# ampersand, or a non-ASCII letter, so `Views` escaping is exercised by simply
+# starting the server.
+module MockData
+
+using Catalog, only: [Draft]
+
+books : [Draft]
+let books = [
+  Draft { title: "Programming Kex", author: "Radar O'Reilly", year: "2026" },
+  Draft { title: "The Little Typer", author: "Friedman & Christiansen", year: "2018" },
+  Draft { title: "Designing Data-Intensive Applications", author: "Martin Kleppmann", year: "2017" },
+  Draft { title: "Programming Erlang", author: "Joe Armstrong", year: "2007" },
+  Draft { title: "Types and Programming Languages", author: "Benjamin C. Pierce", year: "2002" },
+  Draft { title: "The Pragmatic Programmer", author: "Hunt & Thomas", year: "1999" },
+  Draft { title: "Purely Functional Data Structures", author: "Chris Okasaki", year: "1998" },
+  Draft { title: "Compilers: Principles, Techniques, and Tools", author: "Aho, Lam, Sethi & Ullman", year: "1986" },
+  Draft { title: "Structure and Interpretation of Computer Programs", author: "Abelson & Sussman", year: "1985" },
+  Draft { title: "Thinking Forth", author: "Leo Brodie", year: "1984" },
+  Draft { title: "Gödel, Escher, Bach", author: "Douglas Hofstadter", year: "1979" },
+  Draft { title: "A Discipline of Programming", author: "Edsger W. Dijkstra", year: "1976" },
+  Draft { title: "The Mythical Man-Month", author: "Frederick P. Brooks Jr.", year: "1975" },
+  Draft { title: "The Art of Computer Programming", author: "Donald E. Knuth", year: "1968" }
+]

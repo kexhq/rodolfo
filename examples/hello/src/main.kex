@@ -1,7 +1,7 @@
 using Rodolfo
 
 main do
-  run do
+  let site = Rodolfo.router do
     get "/" do |_|
       "Rodolfo says hello!"
     end
@@ -13,5 +13,7 @@ main do
     post "/echo" do |env|
       env.request.body.to(String).try
     end
-  end.try
+  end
+
+  site.start(3000).try
 end

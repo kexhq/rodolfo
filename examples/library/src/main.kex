@@ -3,41 +3,31 @@
 #
 #   tey install && tey run     # http://localhost:3000/books
 #
-# Four files divide the work: `catalog.kex` holds the books and the rules about
-# them (pure), `shelf.kex` keeps them in a file between requests, `views.kex`
-# renders escaped HTML, and this file maps HTTP onto the three.
+# Three environment variables move it: PORT changes the port, HOST opens it up
+# to the network (it answers on this machine alone by default), and
+# LIBRARY_FILE moves the catalogue file.
+#
+#   HOST=0.0.0.0 tey run       # reachable from a phone on the same network
+#
+# Five files divide the work: `catalog.kex` holds the books and the rules about
+# them (pure), `mock_data.kex` is the catalogue a fresh install starts from,
+# `shelf.kex` keeps them in a file between requests, `views.kex` renders
+# escaped HTML, and this file maps HTTP onto the rest.
 using Rodolfo
-using Net.HTTP, only: [Headers, Response]
 using Catalog, only: [Book, Draft]
-
-# The books the catalogue opens with, written on the first run so the first
-# page is not an empty table.
-opening : [Draft]
-let opening = [
-  Draft { title: "Programming Kex", author: "Radar O'Reilly", year: "2026" },
-  Draft { title: "Designing Data-Intensive Applications", author: "Martin Kleppmann", year: "2017" },
-  Draft { title: "Structure and Interpretation of Computer Programs", author: "Abelson & Sussman", year: "1985" }
-]
-
-# Sends markup as an HTML document. `Headers.from` builds the whole collection
-# at once.
-foul markup(status: Integer, body: String) -> Response<Binary> do
-  let headers = Headers.from([("Content-Type", "text/html; charset=utf-8")]).try
-  Response.binary(status, body.to(Binary).try, headers)
-end
+using MockData
 
 # Answers a form submission by sending the browser somewhere to GET, so a
 # reload never repeats the change.
-foul seeOther(location: String) -> Response<Binary> do
-  let headers = Headers.from([("Location", location)]).try
-  Response.binary(303, Binary.empty, headers)
+let seeOther(location: String) -> Rodolfo.Reply do
+  Response.Redirect { status: 303, location: location }
 end
 
 # Renders a book that may not exist, with one 404 page for every route.
-foul withBook(book: Book?, render: Book -> Response<Binary>) -> Response<Binary> do
+let withBook(book: Book?, render: Book -> Rodolfo.Reply) -> Rodolfo.Reply do
   match book do
     Just(found) => render(found)
-    None => markup(404, Views.missing("No book carries that id."))
+    None => Response.HTML { status: 404, body: "${Views.missing("No book carries that id.")}" }
   end
 end
 
@@ -47,25 +37,19 @@ let bookId(env: Env) -> Integer do
   env.param("id").or("").trim.to(Integer).or(0)
 end
 
-# The submitted fields of an `application/x-www-form-urlencoded` body. The HTTP
-# server hands over the body as it arrived, so decoding it is `URI.Form`'s job.
-# A missing field reads as empty, which is what `Catalog.validate` rejects.
+# The submitted fields of the form body. A missing field reads as empty, which
+# is what `Catalog.validate` rejects.
 let submitted(env: Env) -> Draft do
-  let body = env.request.body.to(String).or("")
-  let fields = URI.Form.parse(body).map { |form| form.entries }.or([])
   Draft {
-    title: firstValue(fields, "title"),
-    author: firstValue(fields, "author"),
-    year: firstValue(fields, "year")
+    title: env.form("title").or(""),
+    author: env.form("author").or(""),
+    year: env.form("year").or("")
   }
 end
 
 # One query-string value, or "".
 let queried(env: Env, name: String) -> String do
-  match env.request.target.query do
-    Just(query) => firstValue(query.entries, name)
-    None => ""
-  end
+  env.query(name).or("")
 end
 
 # The message a redirect asked the next page to show. Routes pass a code, so
@@ -74,64 +58,74 @@ let notice(env: Env) -> String? do
   Views.noticeText(queried(env, "notice"))
 end
 
-# The first value named `name` in a decoded form or query string, or "".
-let firstValue(entries: [(String, String?)], name: String) -> String do
-  let found = entries.find { |entry| match entry do (key, _) => key == name end }
-  match found do
-    Just((_, Just(text))) => text
-    _ => ""
-  end
-end
-
 main do
-  let stocked = Shelf.opened(opening)
+  let stocked = Shelf.opened(MockData.books)
   let port = ENV.get("PORT").flatMap { |text| text.to(Integer) }.or(3000)
+  # This machine alone unless HOST says otherwise: the catalogue can be edited
+  # and deleted without signing in, so opening it to the network is a decision
+  # to make on purpose rather than a default to discover.
+  let bindHost = ENV.get("HOST").or("127.0.0.1")
   IO.printLine("Rodolfo Library: ${stocked.count} books in ${Shelf.catalogueFile}")
-  IO.printLine("Listening on http://localhost:${port}/books")
+  # The wildcard bind answers on every address, so the name to print is the one
+  # a person would type; any other HOST is the only address that answers, and
+  # saying "localhost" there would name a URL that refuses the connection.
+  if bindHost == "0.0.0.0"
+    IO.printLine("Listening on http://localhost:${port}/books")
+    IO.printLine("On this network: http://<this machine>:${port}/books")
+    IO.printLine("  address: `ipconfig getifaddr en0` (macOS), `hostname -I` (Linux)")
+  elif bindHost == "127.0.0.1"
+    IO.printLine("Listening on http://localhost:${port}/books")
+    IO.printLine("This machine only; HOST=0.0.0.0 opens it to the network.")
+  else
+    IO.printLine("Listening on http://${bindHost}:${port}/books")
+  end
 
   # Declaration order decides matches, so `/books/new` is declared before
   # `/books/:id` — otherwise "new" would be read as an id.
-  run port do
-    respond "GET", "/" do |_|
+  let library = Rodolfo.router do
+    get "/" do |_|
       seeOther("/books")
     end
 
-    respond "GET", "/books" do |env|
+    get "/books" do |env|
       let term = queried(env, "q")
-      markup(200, Views.index(Shelf.matching(term), term, notice(env)))
+      Views.index(Shelf.matching(term), term, notice(env))
     end
 
-    respond "GET", "/books/new" do |_|
-      markup(200, Views.form("Add a book", "/books", Draft {}, []))
+    get "/books/new" do |_|
+      Views.form("Add a book", "/books", Draft {}, [])
     end
 
-    respond "POST", "/books" do |env|
+    post "/books" do |env|
       let draft = submitted(env)
       match Catalog.validate(draft) do
         [] => do
           let id = Shelf.filed(draft)
           seeOther("/books/${id}?notice=created")
         end
-        errors => markup(422, Views.form("Add a book", "/books", draft, errors))
+        errors => Response.HTML {
+          status: 422,
+          body: "${Views.form("Add a book", "/books", draft, errors)}"
+        }
       end
     end
 
-    respond "GET", "/books/:id" do |env|
+    get "/books/:id" do |env|
       withBook(Shelf.find(bookId(env))) do |book|
-        markup(200, Views.show(book, notice(env)))
+        Views.show(book, notice(env))
       end
     end
 
-    respond "GET", "/books/:id/edit" do |env|
+    get "/books/:id/edit" do |env|
       withBook(Shelf.find(bookId(env))) do |book|
-        markup(200, Views.form("Edit this book", "/books/${book.id}", Catalog.drafted(book), []))
+        Views.form("Edit this book", "/books/${book.id}", Catalog.drafted(book), [])
       end
     end
 
     # Browsers only send GET and POST from a form, so editing posts to the
     # book's own path. `DELETE /books/:id` below serves the same catalogue to
     # a client that can send any method.
-    respond "POST", "/books/:id" do |env|
+    post "/books/:id" do |env|
       let id = bookId(env)
       let draft = submitted(env)
       match Catalog.validate(draft) do
@@ -139,36 +133,46 @@ main do
           seeOther("/books/${book.id}?notice=updated")
         end
         errors => withBook(Shelf.find(id)) do |book|
-          markup(422, Views.form("Edit this book", "/books/${book.id}", draft, errors))
+          Response.HTML {
+            status: 422,
+            body: "${Views.form("Edit this book", "/books/${book.id}", draft, errors)}"
+          }
         end
       end
     end
 
-    respond "POST", "/books/:id/delete" do |env|
+    post "/books/:id/delete" do |env|
       match Shelf.dropped(bookId(env)) do
         true => seeOther("/books?notice=deleted")
-        false => markup(404, Views.missing("No book carries that id."))
+        false => Response.HTML {
+          status: 404,
+          body: "${Views.missing("No book carries that id.")}"
+        }
       end
     end
 
-    respond "POST", "/books/:id/borrow" do |env|
-      withBook(Shelf.lent(bookId(env), true)) do |book|
-        seeOther("/books/${book.id}?notice=lent")
+    # Lending either way sends the reader back to the catalogue rather than to
+    # the book they just handled, so the next thing on screen is the shelf.
+    post "/books/:id/borrow" do |env|
+      withBook(Shelf.lent(bookId(env), true)) do |_|
+        seeOther("/books?notice=lent")
       end
     end
 
-    respond "POST", "/books/:id/return" do |env|
-      withBook(Shelf.lent(bookId(env), false)) do |book|
-        seeOther("/books/${book.id}?notice=returned")
+    post "/books/:id/return" do |env|
+      withBook(Shelf.lent(bookId(env), false)) do |_|
+        seeOther("/books?notice=returned")
       end
     end
 
     # The same delete for `curl -X DELETE`: no page to render, so 204.
-    respond "DELETE", "/books/:id" do |env|
+    delete "/books/:id" do |env|
       match Shelf.dropped(bookId(env)) do
-        true => Response.empty(204)
-        false => Response.empty(404)
+        true => Response.Empty {}
+        false => Response.Empty { status: 404 }
       end
     end
-  end.try
+  end
+
+  library.start(bindHost, port).try
 end

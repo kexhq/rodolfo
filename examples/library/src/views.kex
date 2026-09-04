@@ -1,55 +1,25 @@
-# Every page the library serves, and the escaping that keeps a book title
-# from becoming markup.
+# Every page the library serves.
 #
-# `html$` is a Kex tagged literal: the compiler hands `html` the literal's
-# parts and its interpolated values, so this module — not each caller —
-# decides what escaping means. Plain values are escaped; a `Safe` value is
-# markup this module built already and passes through untouched.
+# The escaping lives in Rodolfo: ``html$`...` `` escapes every value it
+# interpolates, ``rawHTML$`...` `` escapes none of them, and both hand back a
+# `Safe` — markup that a further `html$` passes through untouched. So the
+# templates below nest without a wrapper, and a book title can never become
+# markup unless this module says so.
 module Views
 
 using Catalog
-
-# Markup that is already escaped. Wrapping is the only way to opt out of
-# escaping, so an unwrapped `String` can never reach a page as markup.
-record Safe do
-  markup : String
-end
-
-make Safe, implement: Showable do
-  # Interpolating a `Safe` yields its markup, unchanged.
-  let showValue -> String = @markup
-end
-
-# The tag behind every ``html$`...` `` literal below.
-html : [String] -> [Any] -> String
-let html(parts, values) = interleave(parts, values.map(~render))
-
-# Wraps rendered markup so it survives interpolation into another template.
-safe : String -> Safe
-let safe(markup) = Safe { markup: markup }
-
-# Replaces the five characters that would otherwise end an element,
-# an attribute, or the document.
-escape : String -> String
-let escape(text) do
-  text
-    .replace("&", "&amp;")
-    .replace("<", "&lt;")
-    .replace(">", "&gt;")
-    .replace("\"", "&quot;")
-    .replace("'", "&#39;")
-end
+using Rodolfo, only: [Safe, html, rawHTML, safe, joined]
 
 # The shell every page shares: title, stylesheet, header, and one `Safe` body.
-page : String -> Safe -> String
+page : String -> Safe -> Safe
 let page(title, body) do
-  html$`<!doctype html>
+  let document = html$`<!doctype html>
     <html lang='en'>
       <head>
         <meta charset='utf-8'>
         <meta name='viewport' content='width=device-width, initial-scale=1'>
         <title>${title} · Rodolfo Library</title>
-        <style>${safe(Views.stylesheet)}</style>
+        <style>${rawHTML$`${Views.stylesheet}`}</style>
       </head>
       <body>
         <header>
@@ -60,55 +30,55 @@ let page(title, body) do
       </body>
     </html>
     `
+  document
 end
 
 # The catalogue: a search box, a count, and one row per book.
-index : [Book] -> String -> String? -> String
+index : [Book] -> String -> String? -> Safe
 let index(books, term, notice) do
-  let rows = books.map(~row).join("")
   let listing = books.empty? then emptyState(term) else html$`
     <table>
       <thead><tr><th>Title</th><th>Author</th><th>Year</th><th>Status</th><th>Actions</th></tr></thead>
-      <tbody>${safe(rows)}</tbody>
+      <tbody>${joined(books.map(~row))}</tbody>
     </table>
     `
-  page("Catalogue", safe(html$`
-    ${safe(banner(notice))}
+  page("Catalogue", html$`
+    ${banner(notice)}
     <h1>Catalogue</h1>
     <form class='search' method='get' action='/books'>
       <input type='search' name='q' value='${term}' placeholder='Title or author' aria-label='Search'>
       <button type='submit'>Search</button>
-      ${safe(clearSearch(term))}
+      ${clearSearch(term)}
     </form>
     <p class='count'>${summary(books, term)}</p>
-    ${safe(listing)}
-    `))
+    ${listing}
+    `)
 end
 
 # One book on its own page, with everything that can be done to it.
-show : Book -> String? -> String
+show : Book -> String? -> Safe
 let show(book, notice) do
-  page(book.title, safe(html$`
-    ${safe(banner(notice))}
+  page(book.title, html$`
+    ${banner(notice)}
     <h1>${book.title}</h1>
     <p class='byline'>${book.author} · ${book.year}</p>
-    <p>${safe(badge(book))}</p>
+    <p>${badge(book)}</p>
     <div class='actions'>
       <a class='button' href='/books/${book.id}/edit'>Edit</a>
-      ${safe(lendingButton(book))}
-      ${safe(deleteButton(book))}
+      ${lendingButton(book)}
+      ${deleteButton(book)}
     </div>
     <p><a href='/books'>Back to the catalogue</a></p>
-    `))
+    `)
 end
 
 # The new-book and edit-book form. `errors` is empty on a first visit and
 # carries `Catalog.validate`'s messages when a submission comes back.
-form : String -> String -> Draft -> [String] -> String
+form : String -> String -> Draft -> [String] -> Safe
 let form(heading, action, draft, errors) do
-  page(heading, safe(html$`
+  page(heading, html$`
     <h1>${heading}</h1>
-    ${safe(errorList(errors))}
+    ${errorList(errors)}
     <form method='post' action='${action}'>
       <label>Title <input name='title' value='${draft.title}' autofocus></label>
       <label>Author <input name='author' value='${draft.author}'></label>
@@ -118,17 +88,17 @@ let form(heading, action, draft, errors) do
         <a href='/books'>Cancel</a>
       </div>
     </form>
-    `))
+    `)
 end
 
 # The 404 page, also used when a path carries an id no book has.
-missing : String -> String
+missing : String -> Safe
 let missing(what) do
-  page("Not found", safe(html$`
+  page("Not found", html$`
     <h1>Not found</h1>
     <p>${what}</p>
     <p><a href='/books'>Back to the catalogue</a></p>
-    `))
+    `)
 end
 
 # The one-line message a redirect asks the next page to show. Routes send a
@@ -147,78 +117,128 @@ end
 
 stylesheet : String
 let stylesheet = `
-  :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 15%, transparent); }
-  body { margin: 0 auto; max-width: 52rem; padding: 0 1.5rem 3rem;
-         font: 16px/1.5 system-ui, sans-serif; }
-  header { display: flex; align-items: center; justify-content: space-between;
-           gap: 1rem; padding: 1.25rem 0; border-bottom: 1px solid var(--line); }
-  .brand { font-weight: 600; text-decoration: none; }
-  h1 { font-size: 1.6rem; margin: 1.5rem 0 0.5rem; }
-  .byline, .count { color: color-mix(in srgb, currentColor 65%, transparent); }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 0.6rem 0.5rem; border-bottom: 1px solid var(--line); }
-  th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  td.actions-cell { white-space: nowrap; }
+  :root { color-scheme: light dark;
+          --ink: #16181d; --muted: #5b6270; --surface: #fbfbfa; --panel: #ffffff;
+          --line: #e3e3e0; --accent: #3d5a8a; --accent-soft: #eef2f9;
+          --danger: #a03028; --danger-soft: #fbeeec; --good: #2f6a4a; --good-soft: #edf5f0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink: #e8e9ec; --muted: #9aa1af; --surface: #14161a; --panel: #1b1e24;
+            --line: #2d3138; --accent: #9db8e6; --accent-soft: #1e2634;
+            --danger: #e79088; --danger-soft: #2e2020; --good: #86c6a4; --good-soft: #1a2620; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 54rem; padding: 0 1.5rem 4rem; background: var(--surface);
+         color: var(--ink); font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+         -webkit-font-smoothing: antialiased; }
+  a { color: var(--accent); }
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center;
+           justify-content: space-between; gap: 1rem; margin-bottom: 0.5rem;
+           padding: 1rem 0; background: color-mix(in srgb, var(--surface) 88%, transparent);
+           backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+  .brand { font-weight: 650; font-size: 1.05rem; letter-spacing: -0.01em;
+           color: var(--ink); text-decoration: none; }
+  .brand:hover { color: var(--accent); }
+  h1 { font-size: 1.75rem; letter-spacing: -0.02em; margin: 1.75rem 0 0.35rem; }
+  .byline, .count { color: var(--muted); }
+  .count { font-size: 0.875rem; margin: 0.75rem 0 1rem; }
+  .byline { margin: 0 0 1rem; }
+
+  table { width: 100%; border-collapse: separate; border-spacing: 0;
+          background: var(--panel); border: 1px solid var(--line);
+          border-radius: 0.75rem; overflow: hidden; }
+  th, td { text-align: left; padding: 0.7rem 0.9rem; vertical-align: middle;
+           border-bottom: 1px solid var(--line); }
+  thead th { background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+             font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+             letter-spacing: 0.06em; color: var(--muted); }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+  td a { text-decoration: none; font-weight: 550; }
+  td a:hover { text-decoration: underline; }
+  td.actions-cell { white-space: nowrap; text-align: right; }
+  td.actions-cell > * { margin-left: 0.35rem; }
+  td.actions-cell .button, td.actions-cell button { padding: 0.3rem 0.6rem;
+                                                    font-size: 0.85rem; font-weight: 500; }
+
+  input, button, .button { font: inherit; padding: 0.45rem 0.8rem; border-radius: 0.5rem;
+                           border: 1px solid var(--line); background: var(--panel);
+                           color: inherit; line-height: 1.3; }
+  button, .button { cursor: pointer; text-decoration: none; font-weight: 550;
+                    transition: background 120ms ease, border-color 120ms ease; }
+  button:hover, .button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+                                background: var(--accent-soft); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input:focus { border-color: var(--accent); outline: none;
+                box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  form.search button, .actions > button[type='submit'] {
+    background: var(--accent); border-color: var(--accent); color: var(--panel); }
+  form.search button:hover, .actions > button[type='submit']:hover {
+    background: color-mix(in srgb, var(--accent) 85%, black); }
+  button.danger:hover { border-color: var(--danger); background: var(--danger-soft);
+                        color: var(--danger); }
   form.search { display: flex; gap: 0.5rem; align-items: center; margin: 1rem 0; }
-  form.search input { flex: 1; }
+  /* min-width: 0 lets the box shrink below an input's intrinsic width, so the
+     Clear link keeps its place instead of being pushed past the right edge. */
+  form.search input { flex: 1; min-width: 0; }
+  form.search button, form.search a { flex: none; }
+  form.search a { align-self: center; font-size: 0.875rem; }
   form.inline { display: inline; }
-  input, button, .button { font: inherit; padding: 0.4rem 0.7rem; border-radius: 0.4rem;
-                           border: 1px solid var(--line); background: transparent; color: inherit; }
-  button, .button { cursor: pointer; text-decoration: none; }
-  label { display: block; margin: 0.75rem 0; }
-  label input { display: block; width: 100%; margin-top: 0.25rem; }
-  .actions { display: flex; align-items: center; gap: 0.75rem; margin: 1.25rem 0; }
-  .banner { margin: 1rem 0 0; padding: 0.6rem 0.8rem; border-radius: 0.4rem;
-            border: 1px solid var(--line); }
-  .errors { margin: 1rem 0; padding: 0.6rem 0.8rem 0.6rem 1.8rem; border-radius: 0.4rem;
-            border: 1px solid #c0392b; }
-  .loan { font-weight: 600; }
-  .empty { padding: 2rem 0; }
+  label { display: block; margin: 1rem 0; font-size: 0.875rem; font-weight: 550;
+          color: var(--muted); }
+  label input { display: block; width: 100%; margin-top: 0.35rem; font-size: 1rem;
+                font-weight: 400; color: var(--ink); }
+  .actions { display: flex; align-items: center; gap: 0.6rem; margin: 1.5rem 0; }
+
+  .pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px;
+          font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em;
+          white-space: nowrap; }
+  .loan { background: var(--danger-soft); color: var(--danger); }
+  .shelf { background: var(--good-soft); color: var(--good); }
+  .banner { margin: 1rem 0 0; padding: 0.7rem 0.9rem; border-radius: 0.6rem;
+            background: var(--good-soft); border: 1px solid color-mix(in srgb, var(--good) 30%, transparent);
+            color: var(--good); font-weight: 550; }
+  .errors { margin: 1rem 0; padding: 0.7rem 0.9rem 0.7rem 2rem; border-radius: 0.6rem;
+            background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+            color: var(--danger); }
+  .empty { padding: 2.5rem 1rem; text-align: center; color: var(--muted);
+           background: var(--panel); border: 1px dashed var(--line); border-radius: 0.75rem; }
+  @media (max-width: 34rem) {
+    thead { display: none; }
+    tbody tr { display: block; padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+    tbody td { display: block; border: 0; padding: 0.15rem 0.9rem; }
+    td.actions-cell { text-align: left; margin-top: 0.4rem; }
+    td.actions-cell > * { margin: 0 0.35rem 0 0; }
+  }
   `
 
 private do
-  # Joins n + 1 literal parts with n rendered values.
-  interleave : [String] -> [String] -> String
-  let interleave(parts, values) do
-    let pairs = parts.zip(values + [""])
-    pairs.map { |pair| match pair do (part, value) => part + value end }.join("")
-  end
-
-  # Escapes anything a template interpolates, except markup this module has
-  # already vouched for.
-  render : Any -> String
-  let render(value) do
-    match value do
-      Safe { markup } => markup
-      _ => escape("${value}")
-    end
-  end
-
-  row : Book -> String
+  row : Book -> Safe
   let row(book) do
     html$`
       <tr>
         <td><a href='/books/${book.id}'>${book.title}</a></td>
         <td>${book.author}</td>
         <td>${book.year}</td>
-        <td>${safe(badge(book))}</td>
+        <td>${badge(book)}</td>
         <td class='actions-cell'>
-          <a href='/books/${book.id}/edit'>Edit</a>
-          ${safe(lendingButton(book))}
-          ${safe(deleteButton(book))}
+          <a class='button' href='/books/${book.id}/edit'>Edit</a>
+          ${lendingButton(book)}
+          ${deleteButton(book)}
         </td>
       </tr>
       `
   end
 
-  badge : Book -> String
+  badge : Book -> Safe
   let badge(book) do
-    book.borrowed? then html$`<span class='loan'>On loan</span>` else html$`On the shelf`
+    (book.borrowed?
+      then html$`<span class='pill loan'>On loan</span>`
+      else html$`<span class='pill shelf'>On the shelf</span>`)
   end
 
   # Borrowing and returning are state changes, so they are buttons in a POST
   # form rather than links a crawler could follow.
-  lendingButton : Book -> String
+  lendingButton : Book -> Safe
   let lendingButton(book) do
     let path = book.borrowed? then "return" else "borrow"
     let label = book.borrowed? then "Return" else "Borrow"
@@ -227,33 +247,33 @@ private do
     </form>`
   end
 
-  deleteButton : Book -> String
+  deleteButton : Book -> Safe
   let deleteButton(book) do
     html$`<form class='inline' method='post' action='/books/${book.id}/delete'>
-      <button type='submit'>Delete</button>
+      <button class='danger' type='submit'>Delete</button>
     </form>`
   end
 
-  banner : String? -> String
+  banner : String? -> Safe
   let banner(notice) do
     match notice do
       Just(message) => html$`<p class='banner'>${message}</p>`
-      None => ""
+      None => safe("")
     end
   end
 
-  errorList : [String] -> String
+  errorList : [String] -> Safe
   let errorList(errors) do
-    let items = errors.map { |message| html$`<li>${message}</li>` }.join("")
-    errors.empty? then "" else html$`<ul class='errors'>${safe(items)}</ul>`
+    let items = joined(errors.map { |message| html$`<li>${message}</li>` })
+    errors.empty? then safe("") else html$`<ul class='errors'>${items}</ul>`
   end
 
-  clearSearch : String -> String
+  clearSearch : String -> Safe
   let clearSearch(term) do
-    term.trim.empty? then "" else html$`<a href='/books'>Clear</a>`
+    term.trim.empty? then safe("") else html$`<a href='/books'>Clear</a>`
   end
 
-  emptyState : String -> String
+  emptyState : String -> Safe
   let emptyState(term) do
     let blank = "The catalogue is empty. Add the first book."
     let message = term.trim.empty? then blank else "No book matches that search."
