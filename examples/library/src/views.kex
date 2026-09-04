@@ -13,7 +13,7 @@ using Rodolfo, only: [Safe, html, rawHTML, safe, joined]
 # The shell every page shares: title, stylesheet, header, and one `Safe` body.
 page : String -> Safe -> Safe
 let page(title, body) do
-  let document = html$`<!doctype html>
+  html$`<!doctype html>
     <html lang='en'>
       <head>
         <meta charset='utf-8'>
@@ -29,8 +29,7 @@ let page(title, body) do
         <main>${body}</main>
       </body>
     </html>
-    `
-  document
+  `
 end
 
 # The catalogue: a search box, a count, and one row per book.

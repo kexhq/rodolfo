@@ -72,7 +72,7 @@ foul lent(id, borrowed?) do
 end
 
 # Replaces the catalogue file with `books`.
-kept : [Book] -> Bool
+kept? : [Book] -> Bool
 foul kept(books) = FS.File.write(catalogueFile, Catalog.encoded(books))
 
 # Writes a catalogue built from `drafts`, numbering them from one.

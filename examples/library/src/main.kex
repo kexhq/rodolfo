@@ -17,29 +17,22 @@ using Rodolfo
 using Catalog, only: [Book, Draft]
 using MockData
 
-# Answers a form submission by sending the browser somewhere to GET, so a
-# reload never repeats the change.
-let seeOther(location: String) -> Rodolfo.Reply do
-  Response.Redirect { status: 303, location: location }
-end
-
 # Renders a book that may not exist, with one 404 page for every route.
-let withBook(book: Book?, render: Book -> Rodolfo.Reply) -> Rodolfo.Reply do
-  match book do
-    Just(found) => render(found)
-    None => Response.HTML { status: 404, body: "${Views.missing("No book carries that id.")}" }
-  end
+withBook : Book? -> (Book -> Rodolfo.Reply) -> Rodolfo.Reply
+let withBook(Just(book), render) = render(book)
+let withBook(None, render) do
+  Response.HTML { status: 404, body: "${Views.missing("No book carries that id.")}" }
 end
 
 # The `:id` in the path, or 0 — an id the shelf never issues, so an unparsable
 # path lands on the same 404 page as a deleted book.
-let bookId(env: Env) -> Integer do
+let bookId(env: Context) -> Integer do
   env.param("id").or("").trim.to(Integer).or(0)
 end
 
 # The submitted fields of the form body. A missing field reads as empty, which
 # is what `Catalog.validate` rejects.
-let submitted(env: Env) -> Draft do
+let submitted(env: Context) -> Draft do
   Draft {
     title: env.form("title").or(""),
     author: env.form("author").or(""),
@@ -48,32 +41,26 @@ let submitted(env: Env) -> Draft do
 end
 
 # One query-string value, or "".
-let queried(env: Env, name: String) -> String do
+let queried(env: Context, name: String) -> String do
   env.query(name).or("")
 end
 
 # The message a redirect asked the next page to show. Routes pass a code, so
 # `?notice=` cannot smuggle prose of its own onto the page.
-let notice(env: Env) -> String? do
+let notice(env: Context) -> String? do
   Views.noticeText(queried(env, "notice"))
 end
 
 main do
   let stocked = Shelf.opened(MockData.books)
   let port = ENV.get("PORT").flatMap { |text| text.to(Integer) }.or(3000)
-  # This machine alone unless HOST says otherwise: the catalogue can be edited
-  # and deleted without signing in, so opening it to the network is a decision
-  # to make on purpose rather than a default to discover.
   let bindHost = ENV.get("HOST").or("127.0.0.1")
   IO.printLine("Rodolfo Library: ${stocked.count} books in ${Shelf.catalogueFile}")
-  # The wildcard bind answers on every address, so the name to print is the one
-  # a person would type; any other HOST is the only address that answers, and
-  # saying "localhost" there would name a URL that refuses the connection.
   if bindHost == "0.0.0.0"
     IO.printLine("Listening on http://localhost:${port}/books")
     IO.printLine("On this network: http://<this machine>:${port}/books")
     IO.printLine("  address: `ipconfig getifaddr en0` (macOS), `hostname -I` (Linux)")
-  elif bindHost == "127.0.0.1"
+  elif bindHost == "127.0.0.1" || bindHost == "localhost"
     IO.printLine("Listening on http://localhost:${port}/books")
     IO.printLine("This machine only; HOST=0.0.0.0 opens it to the network.")
   else
@@ -84,7 +71,7 @@ main do
   # `/books/:id` — otherwise "new" would be read as an id.
   let library = Rodolfo.router do
     get "/" do |_|
-      seeOther("/books")
+      redirectTo("/books")
     end
 
     get "/books" do |env|
@@ -98,12 +85,12 @@ main do
 
     post "/books" do |env|
       let draft = submitted(env)
-      match Catalog.validate(draft) do
-        [] => do
-          let id = Shelf.filed(draft)
-          seeOther("/books/${id}?notice=created")
-        end
-        errors => Response.HTML {
+      let errors = Catalog.validate(draft)
+      if errors.empty?
+        let id = Shelf.filed(draft)
+        redirectTo("/books/${id}?notice=created")
+      else
+        Response.HTML {
           status: 422,
           body: "${Views.form("Add a book", "/books", draft, errors)}"
         }
@@ -130,7 +117,7 @@ main do
       let draft = submitted(env)
       match Catalog.validate(draft) do
         [] => withBook(Shelf.rewritten(id, draft)) do |book|
-          seeOther("/books/${book.id}?notice=updated")
+          redirectTo("/books/${book.id}?notice=updated")
         end
         errors => withBook(Shelf.find(id)) do |book|
           Response.HTML {
@@ -142,26 +129,25 @@ main do
     end
 
     post "/books/:id/delete" do |env|
-      match Shelf.dropped(bookId(env)) do
-        true => seeOther("/books?notice=deleted")
-        false => Response.HTML {
-          status: 404,
-          body: "${Views.missing("No book carries that id.")}"
-        }
-      end
+      return redirectTo("/books?notice=deleted") if Shelf.dropped(bookId(env))
+
+      Response.HTML {
+        status: 404,
+        body: "${Views.missing("No book carries that id.")}"
+      }
     end
 
     # Lending either way sends the reader back to the catalogue rather than to
     # the book they just handled, so the next thing on screen is the shelf.
     post "/books/:id/borrow" do |env|
       withBook(Shelf.lent(bookId(env), true)) do |_|
-        seeOther("/books?notice=lent")
+        redirectTo("/books?notice=lent")
       end
     end
 
     post "/books/:id/return" do |env|
       withBook(Shelf.lent(bookId(env), false)) do |_|
-        seeOther("/books?notice=returned")
+        redirectTo("/books?notice=returned")
       end
     end
 

@@ -83,18 +83,52 @@ let html(parts, values) = Rodolfo.Markup.html(parts, values)
 rawHTML : [String] -> [Any] -> Safe
 let rawHTML(parts, values) = Rodolfo.Markup.rawHTML(parts, values)
 
-# The request environment passed to route blocks.
+type Redirection = SeeOther | MovedPermanently | Found | Temporary | Permanent
+
+# Redirects the browser to a new URL, with a 303 See Other status by default.
+#
+# Use the +redirectTo : String -> Redirection -> Response<Binary>+ if you want
+# specify a different status code.
+# @param location String the URL to send the browser to
+# @return Response<Binary> the redirect response
+#
+# @example
+#   get "/old" do |_|
+#     redirectTo("/new")   # redirect to /new, must be always returned from the route block
+#   end
+redirectTo : String -> Reply
+let redirectTo(location) = redirectTo(location, SeeOther)
+
+# Redirects the browser to a new URL, with a specific status code.
+#
+# Use the +redirectTo : String -> Response<Binary>+ for a simplified 303 See Other redirect.
+# @param location String the URL to send the browser to
+# @param redirection Redirection the status code to send, defaulting to 303 See Other (+SeeOther+)
+# @return Response<Binary> the redirect response
+#
+# @example
+#   get "/old" do |_|
+#     redirectTo("/new", MovedPermanently)   # redirect to /new, must be always returned from the route block
+#   end
+redirectTo : String -> Redirection -> Reply
+let redirectTo(location, MovedPermanently) = Response.Redirect { status: 301, location }
+let redirectTo(location, Found) = Response.Redirect { status: 302, location }
+let redirectTo(location, SeeOther) = Response.Redirect { status: 303, location }
+let redirectTo(location, Temporary) = Response.Redirect { status: 307, location }
+let redirectTo(location, Permanent) = Response.Redirect { status: 308, location }
+
+# The request context passed to route blocks.
 #
 # Declared here rather than in a submodule on purpose: the prelude also exports
-# an +Env+ (+Mock.Env+), and a bare +Env+ in an application's annotation
+# an +Context+ (+Mock.Context+), and a bare +Context+ in an application's annotation
 # resolves to that one unless this record is declared in the module the
 # application imports.
-record Env do
+record Context do
   request : Request<Binary>
   context : Context
 end
 
-make Env do
+make Context do
   # Returns a named or wildcard route parameter.
   #
   # @param name [String] the +:name+ or wildcard from the route's path
@@ -162,7 +196,7 @@ type Reply = String
   | Rodolfo.Response.Redirect
 
 # A route block: the request environment in, a reply out.
-type Handler = Env -> Reply
+type Handler = Context -> Reply
 
 # One declaration in a Rodolfo route list.
 record Definition do
@@ -407,7 +441,7 @@ private do
     method: definition.method,
     path: definition.path,
     handler: do |request, context|
-      respond(definition.handler(Env { request: request, context: context }))
+      respond(definition.handler(Context { request: request, context: context }))
     end
   }
 
