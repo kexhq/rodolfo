@@ -1,8 +1,14 @@
 {
   "version": 1,
-  "kex": {"requirement": ">= 0.4.0-beta", "version": "0.4.0-beta"},
-  "otp": {"requirement": "", "release": 29},
-  "deps": {
-
-  }
+  "workspace": {"members": {"hello": "examples/hello", "library": "examples/library", "requestinfo": "examples/requestinfo", "rodolfo": ".", "statusapi": "examples/statusapi", "website": "examples/website"}, "manifest_fingerprint": "21ba19bbc0a806eadcc3f5e4985e2ca50fb0eacf7e213e78d72b815e003cd7a4"},
+  "toolchain": {"kex": "0.4.0", "kex_requirement": ">= 0.4.0-beta", "otp": 29, "otp_requirement": ""},
+  "packages": {
+    "hello": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/hello", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
+    "library": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/library", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
+    "requestinfo": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/requestinfo", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
+    "rodolfo": {"version": "0.1.1", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": ".", "sha256": "", "groups": [], "dependencies": [], "plugins": {}, "workspace": true},
+    "statusapi": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/statusapi", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
+    "website": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/website", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true}
+  },
+  "plugins": {"approvals": {}}
 }

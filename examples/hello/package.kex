@@ -1,6 +1,6 @@
-# An example you can run as a package: it depends on Rodolfo the way any
-# consumer would — resolved from Git by Tey, not from this checkout.
-bundle "hello" do
+# An example run as a workspace member: it depends on the Rodolfo package
+# at the root of this checkout, not a published release.
+package "hello" do
   version("0.1.0")
   description("Rodolfo example: dynamic parameters and request bodies")
   kex(">= 0.4.0-beta")
@@ -8,6 +8,5 @@ bundle "hello" do
 
   entrypoint("src/main.kex")
 
-  # Depend on the named release, drifted forward by tey update.
-  tey("rodolfo", git: "https://github.com/kexhq/rodolfo", tag: "~> 0.1")
+  tey("rodolfo", workspace: true)
 end
