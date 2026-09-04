@@ -1,0 +1,196 @@
+# The catalogue's rules are pure, so they are checked without a socket or a
+# file: every case below is a list of books in and a list of books out.
+using Catalog, only: [Book, Draft]
+
+# A book with only the fields a case cares about spelled out.
+let shelved(id: Integer, title: String, author: String, year: Integer) -> Book do
+  Book { id: id, title: title, author: author, year: year }
+end
+
+let sample() -> [Book] do
+  [
+    shelved(1, "Dune", "Frank Herbert", 1965),
+    shelved(2, "Neuromancer", "William Gibson", 1984),
+    shelved(3, "Ancillary Justice", "Ann Leckie", 2013)
+  ]
+end
+
+let draft(title: String, author: String, year: String) -> Draft do
+  Draft { title: title, author: author, year: year }
+end
+
+describe("Catalog.validate") do
+  it("accepts a complete draft") do
+    assert(Catalog.validate(draft("Dune", "Frank Herbert", "1965")) == [])
+  end
+
+  it("reports every empty field, in field order") do
+    let errors = Catalog.validate(draft("  ", "", ""))
+    assert(errors == [
+      "Title is required.",
+      "Author is required.",
+      "Year must be a whole number."
+    ])
+  end
+
+  it("rejects a year that is not a whole number") do
+    assert(Catalog.validate(draft("Dune", "Frank Herbert", "nineteen")) == [
+      "Year must be a whole number."
+    ])
+  end
+
+  it("rejects a year outside the range the catalogue accepts") do
+    let message = "Year must be between ${Catalog.earliestYear} and ${Catalog.latestYear}."
+    assert(Catalog.validate(draft("Dune", "Frank Herbert", "1200")) == [message])
+    assert(Catalog.validate(draft("Dune", "Frank Herbert", "3000")) == [message])
+  end
+
+  it("accepts the years at both ends of the range") do
+    assert(Catalog.validate(draft("Old", "Anon", "${Catalog.earliestYear}")) == [])
+    assert(Catalog.validate(draft("New", "Anon", "${Catalog.latestYear}")) == [])
+  end
+end
+
+describe("Catalog.sorted") do
+  it("puts the newest book first") do
+    let years = Catalog.sorted(sample()).map { |book| book.year }
+    assert(years == [2013, 1984, 1965])
+  end
+
+  it("orders books of one year by title") do
+    let books = [shelved(1, "Zero", "A", 2000), shelved(2, "Alpha", "B", 2000)]
+    let titles = Catalog.sorted(books).map { |book| book.title }
+    assert(titles == ["Alpha", "Zero"])
+  end
+end
+
+describe("Catalog.matching") do
+  it("matches a title regardless of case") do
+    let found = Catalog.matching(sample(), "DUNE")
+    assert(found.map { |book| book.id } == [1])
+  end
+
+  it("matches an author") do
+    let found = Catalog.matching(sample(), "leckie")
+    assert(found.map { |book| book.id } == [3])
+  end
+
+  it("matches part of a word") do
+    assert(Catalog.matching(sample(), "roman").count == 1)
+  end
+
+  it("returns the whole catalogue for an empty term") do
+    assert(Catalog.matching(sample(), "   ").count == 3)
+  end
+
+  it("returns nothing when no book matches") do
+    assert(Catalog.matching(sample(), "kex") == [])
+  end
+end
+
+describe("Catalog.withId") do
+  it("finds the book carrying an id") do
+    assert(Catalog.withId(sample(), 2).map { |book| book.title } == Just("Neuromancer"))
+  end
+
+  it("returns None for an unknown id") do
+    assert(Catalog.withId(sample(), 99).none?)
+  end
+end
+
+describe("Catalog.added") do
+  it("appends a book built from the draft, trimming its fields") do
+    let books = Catalog.added(sample(), 4, draft("  Dawn  ", "  Octavia Butler ", " 1987 "))
+    let added = Catalog.withId(books, 4).or(shelved(0, "", "", 0))
+    assert(books.count == 4)
+    assert(added.title == "Dawn")
+    assert(added.author == "Octavia Butler")
+    assert(added.year == 1987)
+    assert(added.borrowed? == false)
+  end
+end
+
+describe("Catalog.edited") do
+  it("rewrites the named book and leaves the others alone") do
+    let books = Catalog.edited(sample(), 1, draft("Dune Messiah", "Frank Herbert", "1969"))
+    let edited = Catalog.withId(books, 1).or(shelved(0, "", "", 0))
+    assert(edited.title == "Dune Messiah")
+    assert(edited.year == 1969)
+    assert(Catalog.withId(books, 2).map { |book| book.title } == Just("Neuromancer"))
+  end
+
+  it("keeps the lending state through an edit") do
+    let lent = Catalog.lending(sample(), 1, true)
+    let books = Catalog.edited(lent, 1, draft("Dune", "Frank Herbert", "1965"))
+    assert(Catalog.withId(books, 1).map { |book| book.borrowed? } == Just(true))
+  end
+
+  it("changes nothing for an unknown id") do
+    assert(Catalog.edited(sample(), 99, draft("X", "Y", "2000")) == sample())
+  end
+end
+
+describe("Catalog.without") do
+  it("removes the named book") do
+    let books = Catalog.without(sample(), 2)
+    assert(books.map { |book| book.id } == [1, 3])
+  end
+
+  it("changes nothing for an unknown id") do
+    assert(Catalog.without(sample(), 99).count == 3)
+  end
+end
+
+describe("Catalog.lending") do
+  it("lends a book out and takes it back") do
+    let lent = Catalog.lending(sample(), 3, true)
+    assert(Catalog.withId(lent, 3).map { |book| book.borrowed? } == Just(true))
+    let back = Catalog.lending(lent, 3, false)
+    assert(Catalog.withId(back, 3).map { |book| book.borrowed? } == Just(false))
+  end
+
+  it("leaves the other books on the shelf") do
+    let lent = Catalog.lending(sample(), 3, true)
+    assert(lent.filter { |book| book.borrowed? }.count == 1)
+  end
+end
+
+describe("Catalog.nextId") do
+  it("counts from one for an empty catalogue") do
+    assert(Catalog.nextId([]) == 1)
+  end
+
+  it("goes past the highest id in use, not the count") do
+    assert(Catalog.nextId(sample()) == 4)
+    assert(Catalog.nextId(Catalog.without(sample(), 1)) == 4)
+  end
+end
+
+describe("Catalog.drafted") do
+  it("turns a book back into the draft an edit form starts from") do
+    let back = Catalog.drafted(shelved(1, "Dune", "Frank Herbert", 1965))
+    assert(back == draft("Dune", "Frank Herbert", "1965"))
+  end
+end
+
+describe("Catalog.encoded and Catalog.decoded") do
+  it("round-trips a catalogue") do
+    let books = Catalog.lending(sample(), 2, true)
+    assert(Catalog.decoded(Catalog.encoded(books)) == books)
+  end
+
+  it("reads an empty file as an empty catalogue") do
+    assert(Catalog.decoded("") == [])
+  end
+
+  it("keeps one book on one line") do
+    let books = Catalog.added([], 1, draft("Tab\there", "New\nline", "2000"))
+    assert(Catalog.encoded(books).lines.count == 1)
+    assert(Catalog.decoded(Catalog.encoded(books)).count == 1)
+  end
+
+  it("skips a line it cannot read rather than losing the catalogue") do
+    let good = Catalog.encoded(sample())
+    assert(Catalog.decoded("nonsense\n${good}") == sample())
+  end
+end

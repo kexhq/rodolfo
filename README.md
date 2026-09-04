@@ -75,6 +75,8 @@ from this checkout:
 - `examples/statusapi` — JSON health and catalog API
 - `examples/website` — server-rendered HTML responses
 - `examples/requestinfo` — reusable route-handler wrapping
+- `examples/library` — a book-management CRUD interface: list, search, add,
+  edit, delete, lend, and return, in plain HTML forms
 
 ```sh
 cd examples/hello
@@ -82,8 +84,19 @@ tey install   # fetches rodolfo into the Tey cache, per tey.lock
 tey run       # serves http://localhost:3000
 ```
 
-`tey test` in an example runs its `spec/` directory; there are none yet. The
-examples' `tey.lock` pins the `main` branch's tip commit, so after changing
+The library example reads two variables: `PORT` moves it off `3000`, and
+`LIBRARY_FILE` names the tab-separated file its catalogue is kept in
+(`books.tsv` by default, written with three books on the first run):
+
+```sh
+cd examples/library
+tey install
+PORT=4000 LIBRARY_FILE=/tmp/books.tsv tey run
+```
+
+`tey test` in an example runs its `spec/` directory: `examples/library` has
+specs for its pure catalogue rules, its pages' escaping, and its file store.
+The examples' `tey.lock` pins the `main` branch's tip commit, so after changing
 the library, refresh them with `tey update` in each example directory.
 
 ## Develop
@@ -95,6 +108,11 @@ tey test      # run spec/*.spec.kex on the BEAM
 ```
 
 Rodolfo needs Kex `>= 0.4.0-beta`; pick a toolchain with `tey kex install`.
+
+`docs/kex-issues.md` records the Kex and Tey defects hit while writing the
+examples, with reproductions and the workarounds the examples carry — including
+why `tey install` currently refuses this repository's toolchain requirement and
+why Ctrl+C does not stop a running server.
 
 ## Release it
 

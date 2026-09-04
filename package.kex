@@ -1,6 +1,10 @@
-bundle "rodolfo" do
+package "rodolfo" do
   version("0.1.1")
   description("A tiny Kemal- and Sinatra-inspired web framework for Kex")
   kex(">= 0.4.0-beta")
   license("MIT")
+
+  workspace do
+    members(["examples/*"])
+  end
 end

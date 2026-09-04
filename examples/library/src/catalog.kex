@@ -1,0 +1,170 @@
+# The books and the rules about them — all pure, all testable without a
+# socket. `main.kex` owns the process that holds a `[Book]` and calls in here
+# for every change; `views.kex` turns the results into HTML.
+module Catalog
+
+# One catalogue entry. `id` is assigned by the shelf, never by a request.
+record Book do
+  id : Integer
+  title : String
+  author : String
+  year : Integer
+  borrowed? : Bool = false
+end
+
+# Form input as it arrives from a browser: three strings, none of them
+# trusted yet. `validate` reports what is wrong with a draft, and the shelf
+# only stores drafts it reported nothing about.
+record Draft do
+  title : String = ""
+  author : String = ""
+  year : String = ""
+end
+
+# The oldest book the catalogue accepts, and the newest.
+earliestYear : Integer
+let earliestYear = 1450
+
+latestYear : Integer
+let latestYear = 2100
+
+# Returns the problems with a draft, in field order; empty means it is valid.
+validate : Draft -> [String]
+let validate(draft) do
+  let titled = draft.title.trim.empty? then ["Title is required."] else []
+  let credited = draft.author.trim.empty? then ["Author is required."] else []
+  titled + credited + yearErrors(draft.year)
+end
+
+# Returns the year a validated draft carries. A draft that never passed
+# `validate` falls back to `earliestYear` rather than failing here, which is
+# why the routes check the messages first.
+yearOf : Draft -> Integer
+let yearOf(draft) = draft.year.trim.to(Integer).or(earliestYear)
+
+# Turns a stored book back into the draft an edit form starts from.
+drafted : Book -> Draft
+let drafted(book) = Draft {
+  title: book.title,
+  author: book.author,
+  year: "${book.year}"
+}
+
+# Newest first, then alphabetically — a stable order for the list page.
+sorted : [Book] -> [Book]
+let sorted(books) = books.sort { |left, right| before?(left, right) }
+
+# The books whose title or author contains `term`, case-insensitively. An
+# empty term matches everything, so the search box needs no special case.
+matching : [Book] -> String -> [Book]
+let matching(books, term) = sorted(books.filter { |book| matches?(book, term) })
+
+# The book carrying `id`, or `None`.
+withId : [Book] -> Integer -> Book?
+let withId(books, id) = books.find { |book| book.id == id }
+
+# The catalogue with one more book, built from a validated draft.
+added : [Book] -> Integer -> Draft -> [Book]
+let added(books, id, draft) = books + [Book {
+  id: id,
+  title: draft.title.trim,
+  author: draft.author.trim,
+  year: yearOf(draft)
+}]
+
+# The catalogue with `id`'s fields rewritten from a validated draft. Its id
+# and lending state survive; an unknown id changes nothing.
+edited : [Book] -> Integer -> Draft -> [Book]
+let edited(books, id, draft) do
+  let rewrite = { |book| Book { ...book, title: draft.title.trim, author: draft.author.trim, year: yearOf(draft) } }
+  books.map { |book| book.id == id then rewrite(book) else book }
+end
+
+# The catalogue without `id`.
+without : [Book] -> Integer -> [Book]
+let without(books, id) = books.reject { |book| book.id == id }
+
+# The catalogue with `id`'s lending state set; an unknown id changes nothing.
+lending : [Book] -> Integer -> Bool -> [Book]
+let lending(books, id, borrowed?) do
+  books.map { |book| book.id == id then Book { ...book, borrowed?: borrowed? } else book }
+end
+
+# The id the next book gets: one past the highest in use, so removing a book
+# from the middle of the catalogue never hands its id to a different book.
+nextId : [Book] -> Integer
+let nextId(books) = books.reduce(0) { |highest, book| book.id > highest then book.id else highest } + 1
+
+# The catalogue as one tab-separated line per book. Tabs and newlines are the
+# only characters the format reserves, so `encoded` replaces them rather than
+# letting a title split a record in two.
+encoded : [Book] -> String
+let encoded(books) = books.map(~lineOf).join("\n")
+
+# The books in an `encoded` catalogue. A line that is empty, short, or missing
+# an id is skipped: a half-written file costs the entry, not the catalogue.
+decoded : String -> [Book]
+let decoded(text) do
+  text.lines.reduce([]) do |books, line|
+    match parsed(line) do
+      Just(book) => books + [book]
+      None => books
+    end
+  end
+end
+
+private do
+  yearErrors : String -> [String]
+  let yearErrors(text) do
+    let range = "between ${earliestYear} and ${latestYear}"
+    match text.trim.to(Integer) do
+      None => ["Year must be a whole number."]
+      Just(value) => inRange?(value) then [] else ["Year must be ${range}."]
+    end
+  end
+
+  inRange? : Integer -> Bool
+  let inRange?(value) = value >= earliestYear && value <= latestYear
+
+  matches? : Book -> String -> Bool
+  let matches?(book, term) do
+    let needle = term.trim.lowerCase
+    let hit? = book.title.lowerCase.contains?(needle) || book.author.lowerCase.contains?(needle)
+    needle.empty? || hit?
+  end
+
+  lineOf : Book -> String
+  let lineOf(book) do
+    let lent = book.borrowed? then "1" else "0"
+    ["${book.id}", oneLine(book.title), oneLine(book.author), "${book.year}", lent].join("\t")
+  end
+
+  oneLine : String -> String
+  let oneLine(text) = text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+  parsed : String -> Book?
+  let parsed(line) do
+    match line.split("\t") do
+      [id, title, author, year, lent] => restored(id, title, author, year, lent)
+      _ => None
+    end
+  end
+
+  restored : String -> String -> String -> String -> String -> Book?
+  let restored(id, title, author, year, lent) do
+    let bookId = id.trim.to(Integer).or(0)
+    let book = Book {
+      id: bookId,
+      title: title,
+      author: author,
+      year: year.trim.to(Integer).or(earliestYear),
+      borrowed?: lent.trim == "1"
+    }
+    bookId == 0 then None else Just(book)
+  end
+
+  before? : Book -> Book -> Bool
+  let before?(left, right) do
+    left.year == right.year then left.title <= right.title else left.year > right.year
+  end
+end

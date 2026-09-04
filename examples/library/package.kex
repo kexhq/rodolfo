@@ -1,8 +1,8 @@
 # An example run as a workspace member: it depends on the Rodolfo package
 # at the root of this checkout, not a published release.
-package "hello" do
+package "library" do
   version("0.1.0")
-  description("Rodolfo example: dynamic parameters and request bodies")
+  description("Rodolfo example: a book-management CRUD interface")
   kex(">= 0.4.0-beta")
   license("MIT")
 
