@@ -13,12 +13,56 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # rodolfo needs `kex(">= 0.4.0-beta")`; the published pre-releases
-      # (0.4.0-alpha, 0.4.0-alpha.2) predate the paren-less import fix and
-      # cannot compile this source, so pin to the beta that can.
-      - uses: kexhq/setup-tey@v1
+
+      # rodolfo's package.kex now uses Tey's `workspace` feature, and the
+      # tey.lock it writes needs a Tey that understands that lockfile's
+      # schema to read it back. Neither has shipped in a Kex release yet —
+      # 0.4.0-beta, the newest tag, predates both, so `kexhq/setup-tey`
+      # (which only ever installs a published release archive) cannot get
+      # us a working toolchain here. Until a release ships them, build Kex
+      # and Tey from source at the commit this repo was developed and
+      # verified against. Swap this for `kexhq/setup-tey@v1` again once a
+      # release carries the workspace feature.
+      - name: Check out Kex
+        uses: actions/checkout@v4
         with:
-          kex-version: 0.4.0-beta
+          repository: kexhq/kex
+          ref: 5a088fedf173c99ab6d4ebbb08a54d8a591e35cb
+          path: kex-src
+
+      # Matches kexhq/kex's own CI (.github/workflows/ci.yml, the
+      # build-tey job) so the toolchain built here behaves the same way.
+      - name: Install Kex build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgmp-dev libpcre2-dev libreadline-dev \
+            libssl-dev erlang-base libboost-context-dev
+
+      - name: Build Kex and Tey
+        working-directory: kex-src
+        run: |
+          cmake -B build -G "Unix Makefiles" -DKEX_BOOST_STATIC=ON
+          cmake --build build --parallel
+          make build-tey
+          make tey-run
+
+      # `tey-run` (generated above) is a Tey launcher for this checkout; its
+      # default TEY_ERL is whatever `erl` built it on the machine that ran
+      # `make tey-run`, which is not this runner. A `tey` on PATH that
+      # forwards to it, with TEY_ERL pointed at this runner's own `erl`,
+      # keeps every later step's command (`tey install`, `tey build`, `tey
+      # test`) identical to what it was against a released toolchain.
+      - name: Put a `tey` wrapper on PATH
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/tey" <<WRAP
+          #!/bin/sh
+          export TEY_ERL="$(command -v erl)"
+          exec "$GITHUB_WORKSPACE/kex-src/tey-run" "\$@"
+          WRAP
+          chmod +x "$HOME/.local/bin/tey"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - run: tey install
       - run: tey build
       - run: tey test
