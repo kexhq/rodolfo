@@ -31,8 +31,8 @@ let latestYear = 2100
 # Returns the problems with a draft, in field order; empty means it is valid.
 validate : Draft -> [String]
 let validate(draft) do
-  let titled = draft.title.trim.empty? then ["Title is required."] else []
-  let credited = draft.author.trim.empty? then ["Author is required."] else []
+  let titled = draft.title.blank? then ["Title is required."] else []
+  let credited = draft.author.blank? then ["Author is required."] else []
   titled + credited + yearErrors(draft.year)
 end
 
