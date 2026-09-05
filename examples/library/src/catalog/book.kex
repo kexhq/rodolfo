@@ -9,7 +9,7 @@ using Catalog.Draft, only: [Draft]
 # The identifier the shelf gives a book: an integer in the file and in the
 # URLs, but its own name in the code, so it is never confused with a year or
 # a count.
-type BookId = Integer
+distinct type BookId = Integer
 
 # One catalogue entry. `id` is assigned by the shelf, never by a request.
 record Book do

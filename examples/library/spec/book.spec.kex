@@ -14,35 +14,35 @@ end
 
 describe("Book.drafted") do
   it("turns a book back into the draft an edit form starts from") do
-    let back = shelved(1, "Dune", "Frank Herbert", 1965).drafted
+    let back = shelved(1.as(BookId), "Dune", "Frank Herbert", 1965).drafted
     assert(back == draft("Dune", "Frank Herbert", "1965"))
   end
 end
 
 describe("Book.matches?") do
   it("matches the title or the author, case-insensitively") do
-    let dune = shelved(1, "Dune", "Frank Herbert", 1965)
+    let dune = shelved(1.as(BookId), "Dune", "Frank Herbert", 1965)
     assert(dune.matches?("DUNE"))
     assert(dune.matches?("herbert"))
   end
 
   it("matches an empty term, so the search box needs no special case") do
-    assert(shelved(1, "Dune", "Frank Herbert", 1965).matches?("   "))
+    assert(shelved(1.as(BookId), "Dune", "Frank Herbert", 1965).matches?("   "))
   end
 
   it("does not match a term that occurs in neither field") do
-    assert(shelved(1, "Dune", "Frank Herbert", 1965).matches?("kex").falsy?)
+    assert(shelved(1.as(BookId), "Dune", "Frank Herbert", 1965).matches?("kex").falsy?)
   end
 end
 
 describe("Book.asLine") do
   it("renders the five tab-separated fields, lent as 1 or 0") do
-    assert(shelved(1, "Dune", "Frank Herbert", 1965).asLine == "1\tDune\tFrank Herbert\t1965\t0")
-    let lent = Book { id: 1, title: "Dune", author: "Frank Herbert", year: 1965, borrowed?: true }
+    assert(shelved(1.as(BookId), "Dune", "Frank Herbert", 1965).asLine == "1\tDune\tFrank Herbert\t1965\t0")
+    let lent = Book { id: 1.as(BookId), title: "Dune", author: "Frank Herbert", year: 1965, borrowed?: true }
     assert(lent.asLine == "1\tDune\tFrank Herbert\t1965\t1")
   end
 
   it("replaces the characters the catalogue format reserves") do
-    assert(shelved(1, "Tab\there", "New\nline", 2000).asLine == "1\tTab here\tNew line\t2000\t0")
+    assert(shelved(1.as(BookId), "Tab\there", "New\nline", 2000).asLine == "1\tTab here\tNew line\t2000\t0")
   end
 end

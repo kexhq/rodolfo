@@ -53,7 +53,7 @@ make [Book] do
   # book from the middle of the catalogue never hands its id to a different
   # book.
   nextId :> BookId
-  let nextId = this.reduce(0) { |highest, book| book.id > highest then book.id else highest } + 1
+  let nextId = maxId + 1.as(BookId)
 
   # The catalogue as one tab-separated line per book.
   encoded :> String
@@ -74,6 +74,9 @@ let decoded(text) do
 end
 
 private do
+  maxId :> BookId
+  let maxId = this.max { |book| book.id }.id.or(0.as(BookId))
+
   # `book` with its editable fields rewritten from a validated draft. Its id
   # and lending state survive.
   rewritten : Book -> Draft -> Book

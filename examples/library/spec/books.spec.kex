@@ -11,9 +11,9 @@ end
 
 let sample() -> [Book] do
   [
-    shelved(1, "Dune", "Frank Herbert", 1965),
-    shelved(2, "Neuromancer", "William Gibson", 1984),
-    shelved(3, "Ancillary Justice", "Ann Leckie", 2013)
+    shelved(1.as(BookId), "Dune", "Frank Herbert", 1965),
+    shelved(2.as(BookId), "Neuromancer", "William Gibson", 1984),
+    shelved(3.as(BookId), "Ancillary Justice", "Ann Leckie", 2013)
   ]
 end
 
@@ -28,7 +28,7 @@ describe("[Book].sorted") do
   end
 
   it("orders books of one year by title") do
-    let books = [shelved(1, "Zero", "A", 2000), shelved(2, "Alpha", "B", 2000)]
+    let books = [shelved(1.as(BookId), "Zero", "A", 2000), shelved(2.as(BookId), "Alpha", "B", 2000)]
     let titles = books.sorted.map { |book| book.title }
     assert(titles == ["Alpha", "Zero"])
   end
@@ -60,18 +60,18 @@ end
 
 describe("[Book].carrying") do
   it("finds the book carrying an id") do
-    assert(sample().carrying(2).map { |book| book.title } == Just("Neuromancer"))
+    assert(sample().carrying(2.as(BookId)).map { |book| book.title } == Just("Neuromancer"))
   end
 
   it("returns None for an unknown id") do
-    assert(sample().carrying(99).none?)
+    assert(sample().carrying(99.as(BookId)).none?)
   end
 end
 
 describe("[Book].added") do
   it("appends a book built from the draft, trimming its fields") do
-    let books = sample().added(4, draft("  Dawn  ", "  Octavia Butler ", " 1987 "))
-    let added = books.carrying(4).or(shelved(0, "", "", 0))
+    let books = sample().added(4.as(BookId), draft("  Dawn  ", "  Octavia Butler ", " 1987 "))
+    let added = books.carrying(4.as(BookId)).or(shelved(0.as(BookId), "", "", 0))
     assert(books.count == 4)
     assert(added.title == "Dawn")
     assert(added.author == "Octavia Butler")
@@ -82,45 +82,45 @@ end
 
 describe("[Book].edited") do
   it("rewrites the named book and leaves the others alone") do
-    let books = sample().edited(1, draft("Dune Messiah", "Frank Herbert", "1969"))
-    let edited = books.carrying(1).or(shelved(0, "", "", 0))
+    let books = sample().edited(1.as(BookId), draft("Dune Messiah", "Frank Herbert", "1969"))
+    let edited = books.carrying(1.as(BookId)).or(shelved(0.as(BookId), "", "", 0))
     assert(edited.title == "Dune Messiah")
     assert(edited.year == 1969)
-    assert(books.carrying(2).map { |book| book.title } == Just("Neuromancer"))
+    assert(books.carrying(2.as(BookId)).map { |book| book.title } == Just("Neuromancer"))
   end
 
   it("keeps the lending state through an edit") do
-    let lent = sample().lending(1, true)
-    let books = lent.edited(1, draft("Dune", "Frank Herbert", "1965"))
-    assert(books.carrying(1).map { |book| book.borrowed? } == Just(true))
+    let lent = sample().lending(1.as(BookId), true)
+    let books = lent.edited(1.as(BookId), draft("Dune", "Frank Herbert", "1965"))
+    assert(books.carrying(1.as(BookId)).map { |book| book.borrowed? } == Just(true))
   end
 
   it("changes nothing for an unknown id") do
-    assert(sample().edited(99, draft("X", "Y", "2000")) == sample())
+    assert(sample().edited(99.as(BookId), draft("X", "Y", "2000")) == sample())
   end
 end
 
 describe("[Book].without") do
   it("removes the named book") do
-    let books = sample().without(2)
+    let books = sample().without(2.as(BookId))
     assert(books.map { |book| book.id } == [1, 3])
   end
 
   it("changes nothing for an unknown id") do
-    assert(sample().without(99).count == 3)
+    assert(sample().without(99.as(BookId)).count == 3)
   end
 end
 
 describe("[Book].lending") do
   it("lends a book out and takes it back") do
-    let lent = sample().lending(3, true)
-    assert(lent.carrying(3).map { |book| book.borrowed? } == Just(true))
-    let back = lent.lending(3, false)
-    assert(back.carrying(3).map { |book| book.borrowed? } == Just(false))
+    let lent = sample().lending(3.as(BookId), true)
+    assert(lent.carrying(3.as(BookId)).map { |book| book.borrowed? } == Just(true))
+    let back = lent.lending(3.as(BookId), false)
+    assert(back.carrying(3.as(BookId)).map { |book| book.borrowed? } == Just(false))
   end
 
   it("leaves the other books on the shelf") do
-    let lent = sample().lending(3, true)
+    let lent = sample().lending(3.as(BookId), true)
     assert(lent.filter { |book| book.borrowed? }.count == 1)
   end
 end
@@ -132,13 +132,13 @@ describe("[Book].nextId") do
 
   it("goes past the highest id in use, not the count") do
     assert(sample().nextId == 4)
-    assert(sample().without(1).nextId == 4)
+    assert(sample().without(1.as(BookId)).nextId == 4)
   end
 end
 
 describe("[Book].encoded and Catalog.Books.decoded") do
   it("round-trips a catalogue") do
-    let books = sample().lending(2, true)
+    let books = sample().lending(2.as(BookId), true)
     assert(decoded(books.encoded) == books)
   end
 
@@ -147,7 +147,7 @@ describe("[Book].encoded and Catalog.Books.decoded") do
   end
 
   it("keeps one book on one line") do
-    let books = [].added(1, draft("Tab\there", "New\nline", "2000"))
+    let books = [].added(1.as(BookId), draft("Tab\there", "New\nline", "2000"))
     assert(books.encoded.lines.count == 1)
     assert(decoded(books.encoded).count == 1)
   end

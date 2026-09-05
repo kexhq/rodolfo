@@ -1,6 +1,7 @@
 # The shelf is the only part of the example that touches the disk, so every
 # case here points `LIBRARY_FILE` at its own scratch file and starts from an
 # empty one. Nothing is shared between cases, and nothing is left behind.
+using Catalog.Book, only: [BookId]
 using Catalog.Draft, only: [Draft]
 
 # Points the shelf at an empty scratch file named after the case using it.
@@ -89,7 +90,7 @@ describe("Shelf.rewritten") do
   it("returns None for an unknown id and changes nothing") do
     scratch("rewritten-unknown")
     Shelf.filed(dune())
-    assert(Shelf.rewritten(99, draft("X", "Y", "2000")).none?)
+    assert(Shelf.rewritten(99.as(BookId), draft("X", "Y", "2000")).none?)
     assert(Shelf.books.count == 1)
   end
 end
@@ -104,7 +105,7 @@ describe("Shelf.dropped") do
 
   it("says nothing was there for an unknown id") do
     scratch("dropped-unknown")
-    assert(Shelf.dropped(99).falsy?)
+    assert(Shelf.dropped(99.as(BookId)).falsy?)
   end
 end
 
@@ -119,6 +120,6 @@ describe("Shelf.lent") do
 
   it("returns None for an unknown id") do
     scratch("lent-unknown")
-    assert(Shelf.lent(99, true).none?)
+    assert(Shelf.lent(99.as(BookId), true).none?)
   end
 end

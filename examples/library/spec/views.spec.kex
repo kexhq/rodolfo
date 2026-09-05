@@ -2,23 +2,23 @@
 # what they say is checked here rather than in a browser. Escaping itself is
 # Rodolfo's — `spec/rodolfo.spec.kex` covers `escape`, `html$`, and `rawHTML$`;
 # what these cases prove is that every page reaches for the escaping tag.
-using Catalog.Book, only: [Book]
+using Catalog.Book, only: [Book, BookId]
 using Catalog.Draft, only: [Draft]
 
 # A page as text, which is what an assertion reads.
 let asText(page: Rodolfo.Safe) -> String = "${page}"
 
-let shelved(id: Integer, title: String, author: String, year: Integer) -> Book do
+let shelved(id: BookId, title: String, author: String, year: Integer) -> Book do
   Book { id: id, title: title, author: author, year: year }
 end
 
 let dune() -> Book do
-  shelved(1, "Dune", "Frank Herbert", 1965)
+  shelved(1.as(BookId), "Dune", "Frank Herbert", 1965)
 end
 
 describe("Views.index") do
   it("escapes a title that looks like markup") do
-    let hostile = shelved(1, "<script>alert('x')</script>", "Anon", 2020)
+    let hostile = shelved(1.as(BookId), "<script>alert('x')</script>", "Anon", 2020)
     let page = asText(Views.index([hostile], "", None))
     assert(page.contains?("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"))
     assert(page.contains?("<script>alert").falsy?)
@@ -31,7 +31,7 @@ describe("Views.index") do
   end
 
   it("counts the books and the ones on loan") do
-    let lent = Book { id: 2, title: "Emma", author: "Jane Austen", year: 1815, borrowed?: true }
+    let lent = Book { id: 2.as(BookId), title: "Emma", author: "Jane Austen", year: 1815, borrowed?: true }
     assert(asText(Views.index([dune(), lent], "", None)).contains?("2 books, 1 on loan"))
   end
 
