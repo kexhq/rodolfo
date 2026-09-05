@@ -20,14 +20,21 @@ jobs:
       # 0.4.0-beta, the newest tag, predates both, so `kexhq/setup-tey`
       # (which only ever installs a published release archive) cannot get
       # us a working toolchain here. Until a release ships them, build Kex
-      # and Tey from source at the commit this repo was developed and
-      # verified against. Swap this for `kexhq/setup-tey@v1` again once a
+      # and Tey from source. Swap this for `kexhq/setup-tey@v1` again once a
       # release carries the workspace feature.
+      #
+      # `main`, deliberately, and NOT a pinned commit. Building rodolfo is
+      # what surfaces compiler defects — docs/kex-issues.md is the record of
+      # that — so a pin freezes the canary: breakage goes unnoticed until
+      # somebody bumps the SHA by hand, which is how the private-visibility
+      # regression reached us. The cost is that a red build here no longer
+      # proves rodolfo changed; the failure text says which side it came
+      # from, and the pin can come back temporarily to bisect one.
       - name: Check out Kex
         uses: actions/checkout@v4
         with:
           repository: kexhq/kex
-          ref: 5a088fedf173c99ab6d4ebbb08a54d8a591e35cb
+          ref: main
           path: kex-src
 
       # Matches kexhq/kex's own CI (.github/workflows/ci.yml, the
