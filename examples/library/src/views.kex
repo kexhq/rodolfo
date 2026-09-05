@@ -7,7 +7,8 @@
 # markup unless this module says so.
 module Views
 
-using Catalog
+using Catalog.Book, only: [Book]
+using Catalog.Draft, only: [Draft]
 using Rodolfo, only: [Safe, html, rawHTML, safe, joined]
 
 # The shell every page shares: title, stylesheet, header, and one `Safe` body.

@@ -1,0 +1,49 @@
+# A draft is untrusted form input, so what `validate` reports is checked
+# here rather than in a browser: field order, and the year's range.
+using Catalog.Draft, only: [Draft]
+
+let draft(title: String, author: String, year: String) -> Draft do
+  Draft { title: title, author: author, year: year }
+end
+
+describe("Draft.validate") do
+  it("accepts a complete draft") do
+    assert(draft("Dune", "Frank Herbert", "1965").validate == [])
+  end
+
+  it("reports every empty field, in field order") do
+    let errors = draft("  ", "", "").validate
+    assert(errors == [
+      "Title is required.",
+      "Author is required.",
+      "Year must be a whole number."
+    ])
+  end
+
+  it("rejects a year that is not a whole number") do
+    assert(draft("Dune", "Frank Herbert", "nineteen").validate == [
+      "Year must be a whole number."
+    ])
+  end
+
+  it("rejects a year outside the range the catalogue accepts") do
+    let message = "Year must be between ${Catalog.Draft.EARLIEST_YEAR} and ${Catalog.Draft.LATEST_YEAR}."
+    assert(draft("Dune", "Frank Herbert", "1200").validate == [message])
+    assert(draft("Dune", "Frank Herbert", "3000").validate == [message])
+  end
+
+  it("accepts the years at both ends of the range") do
+    assert(draft("Old", "Anon", "${Catalog.Draft.EARLIEST_YEAR}").validate == [])
+    assert(draft("New", "Anon", "${Catalog.Draft.LATEST_YEAR}").validate == [])
+  end
+end
+
+describe("Draft.yearOf") do
+  it("reads a whole number, trimmed") do
+    assert(draft("Dune", "Frank Herbert", " 1965 ").yearOf == 1965)
+  end
+
+  it("falls back to the earliest year rather than failing") do
+    assert(draft("Dune", "Frank Herbert", "nineteen").yearOf == Catalog.Draft.EARLIEST_YEAR)
+  end
+end

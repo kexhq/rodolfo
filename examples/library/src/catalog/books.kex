@@ -1,0 +1,110 @@
+# The catalogue: what a whole shelf of books knows how to do — find, sort,
+# search, change, and render itself as the tab-separated file the shelf keeps
+# between requests. All pure, all testable without a socket.
+module Catalog.Books
+
+using Catalog.Book, only: [Book, BookId]
+using Catalog.Draft, only: [Draft]
+
+make [Book] do
+  # The book carrying `id`, or `None`.
+  carrying :> BookId -> Book?
+  let carrying(id) = this.find { |book| book.id == id }
+
+  # The catalogue, newest first; books of one year order by title.
+  sorted :> [Book]
+  let sorted = this.sort(~before?)
+
+  # The books whose title or author contains `term`. An empty term matches
+  # everything, so the search box needs no special case.
+  matching :> String -> [Book]
+  let matching(term) = this.filter(&.matches?(term)).sorted
+
+  # The catalogue with one more book, built from a validated draft.
+  added :> BookId -> Draft -> [Book]
+  let added(id, draft) do
+    let book = Book {
+      id: id,
+      title: draft.title.trim,
+      author: draft.author.trim,
+      year: draft.yearOf
+    }
+    [book] + this
+  end
+
+  # The catalogue with `id`'s fields rewritten from a validated draft. Its id
+  # and lending state survive; an unknown id changes nothing.
+  edited :> BookId -> Draft -> [Book]
+  let edited(id, draft) = this.map { |book| book.id == id then rewritten(book, draft) else book }
+
+  # The catalogue without `id`.
+  without :> BookId -> [Book]
+  let without(id) = this.reject { |book| book.id == id }
+
+  # The catalogue with `id`'s lending state set; an unknown id changes
+  # nothing.
+  lending :> BookId -> Bool -> [Book]
+  let lending(id, borrowed?) do
+    this.map { |book| book.id == id then Book { ...book, borrowed?: borrowed? } else book }
+  end
+
+  # The id the next book gets: one past the highest in use, so removing a
+  # book from the middle of the catalogue never hands its id to a different
+  # book.
+  nextId :> BookId
+  let nextId = this.reduce(0) { |highest, book| book.id > highest then book.id else highest } + 1
+
+  # The catalogue as one tab-separated line per book.
+  encoded :> String
+  let encoded = this.map(&.asLine).join("\n")
+end
+
+# The books in an `encoded` catalogue. A line that is empty, short, or
+# missing an id is skipped: a half-written file costs the entry, not the
+# catalogue.
+decoded : String -> [Book]
+let decoded(text) do
+  text.lines.reduce([]) do |books, line|
+    match parsed(line) do
+      Just(book) => books + [book]
+      None => books
+    end
+  end
+end
+
+private do
+  before? : Book -> Book -> Bool
+  let before?(left, right) do
+    left.year == right.year then left.title <= right.title else left.year > right.year
+  end
+
+  # `book` with its editable fields rewritten from a validated draft. Its id
+  # and lending state survive.
+  rewritten : Book -> Draft -> Book
+  let rewritten(book, draft) do
+    Book { ...book, title: draft.title.trim, author: draft.author.trim, year: draft.yearOf }
+  end
+
+  parsed : String -> Book?
+  let parsed(line) do
+    match line.split("\t") do
+      [id, title, author, year, lent] => restored(id, title, author, year, lent)
+      _ => None
+    end
+  end
+
+  restored : String -> String -> String -> String -> String -> Book?
+  let restored(id, title, author, year, lent) do
+    # Parsed as an `Integer` rather than a `BookId`: `.to` only knows the
+    # built-in types, so the text is read first and named after.
+    let bookId = id.trim.to(Integer).or(0).as(BookId)
+    let book = Book {
+      id: bookId,
+      title: title,
+      author: author,
+      year: year.trim.to(Integer).or(Catalog.Draft.EARLIEST_YEAR),
+      borrowed?: lent.trim == "1"
+    }
+    bookId == 0 then None else Just(book)
+  end
+end

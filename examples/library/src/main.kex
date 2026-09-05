@@ -9,12 +9,13 @@
 #
 #   HOST=0.0.0.0 tey run       # reachable from a phone on the same network
 #
-# Five files divide the work: `catalog.kex` holds the books and the rules about
-# them (pure), `mock_data.kex` is the catalogue a fresh install starts from,
-# `shelf.kex` keeps them in a file between requests, `views.kex` renders
+# Five modules divide the work: `catalog/` holds the books and the rules
+# about them (pure), `mock_data.kex` is the catalogue a fresh install starts
+# from, `shelf.kex` keeps them in a file between requests, `views.kex` renders
 # escaped HTML, and this file maps HTTP onto the rest.
 using Rodolfo
-using Catalog, only: [Book, Draft]
+using Catalog.Book, only: [Book, BookId]
+using Catalog.Draft, only: [Draft]
 using MockData
 
 # Renders a book that may not exist, with one 404 page for every route.
@@ -26,12 +27,12 @@ end
 
 # The `:id` in the path, or 0 — an id the shelf never issues, so an unparsable
 # path lands on the same 404 page as a deleted book.
-let bookId(env: Context) -> Integer do
-  env.param("id").or("").trim.to(Integer).or(0)
+let bookId(env: Context) -> BookId do
+  env.param("id").or("").trim.to(Integer).or(0).as(BookId)
 end
 
 # The submitted fields of the form body. A missing field reads as empty, which
-# is what `Catalog.validate` rejects.
+# is what `Draft.validate` rejects.
 let submitted(env: Context) -> Draft do
   Draft {
     title: env.form("title").or(""),
@@ -52,7 +53,7 @@ let notice(env: Context) -> String? do
 end
 
 main do
-  let stocked = Shelf.opened(MockData.books)
+  let stocked = Shelf.opened(MockData.MOCK_BOOKS)
   let port = ENV.get("PORT").flatMap { |text| text.to(Integer) }.or(3000)
   let bindHost = ENV.get("HOST").or("127.0.0.1")
   IO.printLine("Rodolfo Library: ${stocked.count} books in ${Shelf.catalogueFile}")
@@ -85,7 +86,7 @@ main do
 
     post "/books" do |env|
       let draft = submitted(env)
-      let errors = Catalog.validate(draft)
+      let errors = draft.validate
       if errors.empty?
         let id = Shelf.filed(draft)
         redirectTo("/books/${id}?notice=created")
@@ -105,7 +106,7 @@ main do
 
     get "/books/:id/edit" do |env|
       withBook(Shelf.find(bookId(env))) do |book|
-        Views.form("Edit this book", "/books/${book.id}", Catalog.drafted(book), [])
+        Views.form("Edit this book", "/books/${book.id}", book.drafted, [])
       end
     end
 
@@ -115,7 +116,7 @@ main do
     post "/books/:id" do |env|
       let id = bookId(env)
       let draft = submitted(env)
-      match Catalog.validate(draft) do
+      match draft.validate do
         [] => withBook(Shelf.rewritten(id, draft)) do |book|
           redirectTo("/books/${book.id}?notice=updated")
         end

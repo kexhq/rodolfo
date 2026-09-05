@@ -2,7 +2,8 @@
 # what they say is checked here rather than in a browser. Escaping itself is
 # Rodolfo's — `spec/rodolfo.spec.kex` covers `escape`, `html$`, and `rawHTML$`;
 # what these cases prove is that every page reaches for the escaping tag.
-using Catalog, only: [Book, Draft]
+using Catalog.Book, only: [Book]
+using Catalog.Draft, only: [Draft]
 
 # A page as text, which is what an assertion reads.
 let asText(page: Rodolfo.Safe) -> String = "${page}"
@@ -30,8 +31,8 @@ describe("Views.index") do
   end
 
   it("counts the books and the ones on loan") do
-    let books = Catalog.lending([dune(), shelved(2, "Emma", "Jane Austen", 1815)], 2, true)
-    assert(asText(Views.index(books, "", None)).contains?("2 books, 1 on loan"))
+    let lent = Book { id: 2, title: "Emma", author: "Jane Austen", year: 1815, borrowed?: true }
+    assert(asText(Views.index([dune(), lent], "", None)).contains?("2 books, 1 on loan"))
   end
 
   it("says one book in the singular") do

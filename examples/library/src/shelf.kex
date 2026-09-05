@@ -1,6 +1,6 @@
 # Where the catalogue lives between requests: one tab-separated file, read
 # before a change and written after it. Every rule about the books stays in
-# `Catalog`; this module only moves them to and from the disk.
+# `catalog/`; this module only moves them to and from the disk.
 #
 # A `serving` process would be the natural home for shared state, and this
 # example started there — but Kex 0.4.0-beta does not export a program's slot
@@ -10,7 +10,9 @@
 # one-reader catalogue never notices and a busy one would.
 module Shelf
 
-using Catalog, only: [Book, Draft]
+using Catalog.Book, only: [Book, BookId]
+using Catalog.Books, only: [decoded]
+using Catalog.Draft, only: [Draft]
 
 # The catalogue file. `LIBRARY_FILE` moves it, so two servers can run side by
 # side and a spec can point at a scratch copy.
@@ -27,58 +29,58 @@ end
 
 # Every book, newest first.
 books : [Book]
-foul books = Catalog.sorted(Catalog.decoded(FS.File.read(catalogueFile).or("")))
+foul books = decoded(FS.File.read(catalogueFile).or("")).sorted
 
 # The books matching a search term; every book when the term is empty.
 matching : String -> [Book]
-foul matching(term) = Catalog.matching(Catalog.decoded(FS.File.read(catalogueFile).or("")), term)
+foul matching(term) = decoded(FS.File.read(catalogueFile).or("")).matching(term)
 
 # One book, or `None` when no book carries that id.
-find : Integer -> Book?
-foul find(id) = Catalog.withId(books, id)
+find : BookId -> Book?
+foul find(id) = books.carrying(id)
 
 # Files a validated draft and returns the id it was given.
-filed : Draft -> Integer
+filed : Draft -> BookId
 foul filed(draft) do
   let current = books
-  let id = Catalog.nextId(current)
-  kept(Catalog.added(current, id, draft))
+  let id = current.nextId
+  kept(current.added(id, draft))
   id
 end
 
 # Rewrites a book from a validated draft, returning the stored result, or
 # `None` when the id is unknown.
-rewritten : Integer -> Draft -> Book?
+rewritten : BookId -> Draft -> Book?
 foul rewritten(id, draft) do
-  let current = Catalog.edited(books, id, draft)
+  let current = books.edited(id, draft)
   kept(current)
-  Catalog.withId(current, id)
+  current.carrying(id)
 end
 
 # Removes a book, returning whether there was one to remove.
-dropped : Integer -> Bool
+dropped : BookId -> Bool
 foul dropped(id) do
   let current = books
-  kept(Catalog.without(current, id))
-  Catalog.withId(current, id).set?
+  kept(current.without(id))
+  current.carrying(id).set?
 end
 
 # Lends a book out or takes it back, returning the stored book.
-lent : Integer -> Bool -> Book?
+lent : BookId -> Bool -> Book?
 foul lent(id, borrowed?) do
-  let current = Catalog.lending(books, id, borrowed?)
+  let current = books.lending(id, borrowed?)
   kept(current)
-  Catalog.withId(current, id)
+  current.carrying(id)
 end
 
 # Replaces the catalogue file with `books`.
 kept? : [Book] -> Bool
-foul kept(books) = FS.File.write(catalogueFile, Catalog.encoded(books))
+foul kept(books) = FS.File.write(catalogueFile, books.encoded)
 
 # Writes a catalogue built from `drafts`, numbering them from one.
 stocked : [Draft] -> [Book]
 foul stocked(drafts) do
-  let seeded = drafts.reduce([]) { |shelved, draft| Catalog.added(shelved, Catalog.nextId(shelved), draft) }
+  let seeded = drafts.reduce([]) { |shelved, draft| shelved.added(shelved.nextId, draft) }
   kept(seeded)
-  Catalog.sorted(seeded)
+  seeded.sorted
 end

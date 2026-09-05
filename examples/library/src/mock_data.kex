@@ -8,10 +8,10 @@
 # starting the server.
 module MockData
 
-using Catalog, only: [Draft]
+using Catalog.Draft, only: [Draft]
 
-books : [Draft]
-let books = [
+MOCK_BOOKS : [Draft]
+let MOCK_BOOKS = [
   Draft { title: "Programming Kex", author: "Radar O'Reilly", year: "2026" },
   Draft { title: "The Little Typer", author: "Friedman & Christiansen", year: "2018" },
   Draft { title: "Designing Data-Intensive Applications", author: "Martin Kleppmann", year: "2017" },

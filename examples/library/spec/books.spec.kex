@@ -1,0 +1,159 @@
+# The catalogue's rules are pure, so they are checked without a socket or a
+# file: every case below is a list of books in and a list of books out.
+using Catalog.Book, only: [Book, BookId]
+using Catalog.Books, only: [decoded]
+using Catalog.Draft, only: [Draft]
+
+# A book with only the fields a case cares about spelled out.
+let shelved(id: BookId, title: String, author: String, year: Integer) -> Book do
+  Book { id: id, title: title, author: author, year: year }
+end
+
+let sample() -> [Book] do
+  [
+    shelved(1, "Dune", "Frank Herbert", 1965),
+    shelved(2, "Neuromancer", "William Gibson", 1984),
+    shelved(3, "Ancillary Justice", "Ann Leckie", 2013)
+  ]
+end
+
+let draft(title: String, author: String, year: String) -> Draft do
+  Draft { title: title, author: author, year: year }
+end
+
+describe("[Book].sorted") do
+  it("puts the newest book first") do
+    let years = sample().sorted.map { |book| book.year }
+    assert(years == [2013, 1984, 1965])
+  end
+
+  it("orders books of one year by title") do
+    let books = [shelved(1, "Zero", "A", 2000), shelved(2, "Alpha", "B", 2000)]
+    let titles = books.sorted.map { |book| book.title }
+    assert(titles == ["Alpha", "Zero"])
+  end
+end
+
+describe("[Book].matching") do
+  it("matches a title regardless of case") do
+    let found = sample().matching("DUNE")
+    assert(found.map { |book| book.id } == [1])
+  end
+
+  it("matches an author") do
+    let found = sample().matching("leckie")
+    assert(found.map { |book| book.id } == [3])
+  end
+
+  it("matches part of a word") do
+    assert(sample().matching("roman").count == 1)
+  end
+
+  it("returns the whole catalogue for an empty term") do
+    assert(sample().matching("   ").count == 3)
+  end
+
+  it("returns nothing when no book matches") do
+    assert(sample().matching("kex") == [])
+  end
+end
+
+describe("[Book].carrying") do
+  it("finds the book carrying an id") do
+    assert(sample().carrying(2).map { |book| book.title } == Just("Neuromancer"))
+  end
+
+  it("returns None for an unknown id") do
+    assert(sample().carrying(99).none?)
+  end
+end
+
+describe("[Book].added") do
+  it("appends a book built from the draft, trimming its fields") do
+    let books = sample().added(4, draft("  Dawn  ", "  Octavia Butler ", " 1987 "))
+    let added = books.carrying(4).or(shelved(0, "", "", 0))
+    assert(books.count == 4)
+    assert(added.title == "Dawn")
+    assert(added.author == "Octavia Butler")
+    assert(added.year == 1987)
+    assert(added.borrowed? == false)
+  end
+end
+
+describe("[Book].edited") do
+  it("rewrites the named book and leaves the others alone") do
+    let books = sample().edited(1, draft("Dune Messiah", "Frank Herbert", "1969"))
+    let edited = books.carrying(1).or(shelved(0, "", "", 0))
+    assert(edited.title == "Dune Messiah")
+    assert(edited.year == 1969)
+    assert(books.carrying(2).map { |book| book.title } == Just("Neuromancer"))
+  end
+
+  it("keeps the lending state through an edit") do
+    let lent = sample().lending(1, true)
+    let books = lent.edited(1, draft("Dune", "Frank Herbert", "1965"))
+    assert(books.carrying(1).map { |book| book.borrowed? } == Just(true))
+  end
+
+  it("changes nothing for an unknown id") do
+    assert(sample().edited(99, draft("X", "Y", "2000")) == sample())
+  end
+end
+
+describe("[Book].without") do
+  it("removes the named book") do
+    let books = sample().without(2)
+    assert(books.map { |book| book.id } == [1, 3])
+  end
+
+  it("changes nothing for an unknown id") do
+    assert(sample().without(99).count == 3)
+  end
+end
+
+describe("[Book].lending") do
+  it("lends a book out and takes it back") do
+    let lent = sample().lending(3, true)
+    assert(lent.carrying(3).map { |book| book.borrowed? } == Just(true))
+    let back = lent.lending(3, false)
+    assert(back.carrying(3).map { |book| book.borrowed? } == Just(false))
+  end
+
+  it("leaves the other books on the shelf") do
+    let lent = sample().lending(3, true)
+    assert(lent.filter { |book| book.borrowed? }.count == 1)
+  end
+end
+
+describe("[Book].nextId") do
+  it("counts from one for an empty catalogue") do
+    assert([].nextId == 1)
+  end
+
+  it("goes past the highest id in use, not the count") do
+    assert(sample().nextId == 4)
+    assert(sample().without(1).nextId == 4)
+  end
+end
+
+describe("[Book].encoded and Catalog.Books.decoded") do
+  it("round-trips a catalogue") do
+    let books = sample().lending(2, true)
+    assert(decoded(books.encoded) == books)
+  end
+
+  it("reads an empty file as an empty catalogue") do
+    assert(decoded("") == [])
+  end
+
+  it("keeps one book on one line") do
+    let books = [].added(1, draft("Tab\there", "New\nline", "2000"))
+    assert(books.encoded.lines.count == 1)
+    assert(decoded(books.encoded).count == 1)
+  end
+
+  it("skips a line it cannot read rather than losing the catalogue") do
+    let good = sample().encoded
+    assert(decoded("nonsense\n${good}") == sample())
+  end
+end
