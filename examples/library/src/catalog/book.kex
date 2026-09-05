@@ -20,7 +20,13 @@ record Book do
   borrowed? : Bool = false
 end
 
-make Book do
+# The catalogue's order: newest first, and books of one year by title. Living
+# on the record rather than in a comparator means a plain `.sort` produces it.
+make Book, implement: Comparable do
+  let compare(other: Book) -> Ordering do
+    other.year.compare(@year).thenBy { byTitle(@title, other.title) }
+  end
+
   # The draft an edit form starts from.
   drafted :> Draft
   let drafted = Draft {
@@ -43,11 +49,19 @@ make Book do
     let lent = @borrowed? then "1" else "0"
     ["${@id}", oneLine(@title), oneLine(@author), "${@year}", lent].join("\t")
   end
-end
 
-private do
-  # `text` with the two characters the catalogue format reserves replaced,
-  # so a title can never split a record in two.
-  oneLine : String -> String
-  let oneLine(text) = text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+  private do
+    # `text` with the two characters the catalogue format reserves replaced,
+    # so a title can never split a record in two.
+    oneLine :> String -> String
+    let oneLine(text) = text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+
+    # `String` is not `Comparable`, so the tie-break spells the order out.
+    byTitle :> String -> String -> Ordering
+    let byTitle(left, right) do
+      return Less if left < right
+      return Greater if left > right
+      Equal
+    end
+  end
 end

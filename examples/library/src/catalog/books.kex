@@ -11,9 +11,10 @@ make [Book] do
   carrying :> BookId -> Book?
   let carrying(id) = this.find { |book| book.id == id }
 
-  # The catalogue, newest first; books of one year order by title.
+  # The catalogue in `Book`'s own order: newest first, books of one year by
+  # title.
   sorted :> [Book]
-  let sorted = this.sort(~before?)
+  let sorted = this.sort
 
   # The books whose title or author contains `term`. An empty term matches
   # everything, so the search box needs no special case.
@@ -73,11 +74,6 @@ let decoded(text) do
 end
 
 private do
-  before? : Book -> Book -> Bool
-  let before?(left, right) do
-    left.year == right.year then left.title <= right.title else left.year > right.year
-  end
-
   # `book` with its editable fields rewritten from a validated draft. Its id
   # and lending state survive.
   rewritten : Book -> Draft -> Book

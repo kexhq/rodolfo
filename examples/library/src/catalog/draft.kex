@@ -9,9 +9,7 @@ record Draft do
   year : String = ""
 end
 
-# The oldest book the catalogue accepts, and the newest. Capitalized names
-# are constants; the compiler only resolves them qualified —
-# `Catalog.Draft.EARLIEST_YEAR` — the way the stdlib's `Console.RED` is read.
+# The oldest book the catalogue accepts, and the newest.
 let EARLIEST_YEAR = 1450
 let LATEST_YEAR = 2100
 
@@ -28,19 +26,19 @@ make Draft do
   # falls back to `EARLIEST_YEAR` rather than failing here, which is why the
   # routes check the messages first.
   yearOf :> Integer
-  let yearOf = @year.trim.to(Integer).or(Catalog.Draft.EARLIEST_YEAR)
-end
+  let yearOf = @year.trim.to(Integer).or(EARLIEST_YEAR)
 
-private do
-  yearErrors : String -> [String]
-  let yearErrors(text) do
-    let range = "between ${Catalog.Draft.EARLIEST_YEAR} and ${Catalog.Draft.LATEST_YEAR}"
-    match text.trim.to(Integer) do
-      None => ["Year must be a whole number."]
-      Just(value) => inRange?(value) then [] else ["Year must be ${range}."]
+  private do
+    yearErrors :> String -> [String]
+    let yearErrors(text) do
+      let range = "between ${EARLIEST_YEAR} and ${LATEST_YEAR}"
+      match text.trim.to(Integer) do
+        None => ["Year must be a whole number."]
+        Just(value) => inRange?(value) then [] else ["Year must be ${range}."]
+      end
     end
-  end
 
-  inRange? : Integer -> Bool
-  let inRange?(value) = value >= Catalog.Draft.EARLIEST_YEAR && value <= Catalog.Draft.LATEST_YEAR
+    inRange? :> Integer -> Bool
+    let inRange?(value) = value >= EARLIEST_YEAR && value <= LATEST_YEAR
+  end
 end
