@@ -269,6 +269,52 @@ resolves from the same `--source-root`. Compile-only checking is therefore
 not usable as a fast feedback loop; the reliable check is a full `kex -R`
 run, which costs about 40–45 seconds of BEAM startup per invocation.
 
+### 13. `private` methods in a `make` block cannot be called from sibling methods
+
+Found on `6ccdf35` while splitting `catalog.kex` into `catalog/`. Filed
+upstream as kexhq/kex#281.
+
+A helper declared `private` inside a `make` block is unreachable from the
+other methods of the same block: the call passes the type checker and dies at
+Core Erlang lint.
+
+```
+error: could not compile Kex.Thing: {error,
+  [{"Kex.Thing", [{none, core_lint,
+    {undefined_function, {decorate,1}, {shouted,1}}}]}], []}
+```
+
+Invertedly, the same private method *is* callable from another module's make
+block, which `docs/modules.md` says it should not be — the visibility is the
+opposite of the documented rule in both directions.
+
+Workaround: the helpers a make-method needs are declared in a module-level
+`private do ... end` block instead (module-private functions are callable
+from make-methods in the same module), which is how `src/catalog/book.kex`,
+`draft.kex`, and `books.kex` are written.
+
+### 14. Capitalized module constants resolve as Variants unless qualified
+
+Found on `6ccdf35` while splitting `catalog.kex` into `catalog/`. Filed
+upstream as kexhq/kex#282.
+
+`let EARLIEST_YEAR = 1450` referenced unqualified — in an interpolation hole
+or in arithmetic — passes the type checker and fails at run time:
+
+```
+Internal error: ... runtime error: Undefined function: EARLIEST_YEAR.showValue
+Internal error: ... runtime error: Cannot add Variant and Integer
+```
+
+Worse, once a function in the defining module references its own constant
+unqualified, that module's exports stop importing: the failure is reported as
+`Undefined identifier` at the use site, with nothing pointing at the
+definition. Qualified access — `Catalog.Draft.EARLIEST_YEAR`, the same shape
+the stdlib's `Console.RED` always takes — works.
+
+Workaround: every reference in `src/catalog/draft.kex`, `books.kex`, and the
+specs is qualified, and the constants carry a comment saying why.
+
 ## Ctrl+C does not stop a running server
 
 **Fixed** on `5a088fe`, by `85be62e` ("Attempt to fix SIGINT" — the name is

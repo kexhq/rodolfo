@@ -1,7 +1,7 @@
 # The shelf is the only part of the example that touches the disk, so every
 # case here points `LIBRARY_FILE` at its own scratch file and starts from an
 # empty one. Nothing is shared between cases, and nothing is left behind.
-using Catalog, only: [Book, Draft]
+using Catalog.Draft, only: [Draft]
 
 # Points the shelf at an empty scratch file named after the case using it.
 foul scratch(name: String) -> String do

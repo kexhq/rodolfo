@@ -1,27 +1,22 @@
-# `using Rodolfo` brings the route DSL (`route`, `respond`, `build`, ...).
-# `using Net.HTTP`/`Net.Socket` are selective so the network types' methods
-# (`client.request`, `server.stop`, ...) dispatch. The DSL is limited to
-# `route`/`respond` here on purpose: the bare verb sugar (`get`/`post`/...) has
-# the same names as Net.HTTP's Router make-methods, and a foul make-method of a
-# same-named `using`-imported module makes the pure DSL function lower at +1
-# arity (kexhq/kex#272).
+# `using Rodolfo` brings the route DSL (`router`, `get`, `post`, `Response`).
+# Net.HTTP is imported selectively: its `Response` is not Rodolfo's, and its
+# `Router` make-methods share names with the bare verbs.
 using Rodolfo
-using Net.HTTP, only: [Client, Server, ServerOptions, Response, Headers, Context, Request, Status]
+using Net.HTTP, only: [Client, Server, ServerOptions, Headers, Context, Request, Status]
 using Net.Socket, only: [TCP]
 
 # A running Rodolfo router on an ephemeral loopback port, plus a pooled client
-# pointing at it. Mirrors Kex's own server round-trip spec: port 0 asks the OS
-# for a free port and `localAddress` reports the one it got.
+# pointing at it. Port 0 asks the OS for a free port and `localAddress` reports
+# the one it got.
 record ServerState do
   server : Server.Running
   client : Client
   port : Integer
 end
 
-# Starts whatever router `build` produced and returns a state to drive it.
-foul boot(router: Router) -> ServerState do
-  let endpoint = TCP.Endpoint.loopback(Net.Port.from(0).try)
-  let server = Server.start(endpoint, router, ServerOptions {
+# Starts a router in the background and returns a state to drive it.
+foul boot(router: Rodolfo.Router) -> ServerState do
+  let server = router.background("127.0.0.1", 0, ServerOptions {
     maximumHandlers: 32,
     backlog: 16,
     gracefulShutdown: Duration.milliseconds(100)
@@ -31,56 +26,264 @@ foul boot(router: Router) -> ServerState do
   ServerState { server: server, client: client, port: port }
 end
 
-# Shuts the server and client down. Called from an `after` hook so a failed
-# case never leaks a listener or a pooled connection.
+# Shuts the server and client down. Called at the end of each case so a failed
+# one never leaks a listener or a pooled connection.
 foul teardown(state: ServerState) do
   state.client.close().try
   let report = state.server.stop().try
   assert(report.forced == 0, "a closed client should need no forced handlers")
 end
 
+# Reads one response header.
+let header(response: Net.HTTP.Response<Binary>, name: String) -> String? do
+  response.headers.get(name)
+end
+
 # Sends a request with the given method, no headers or body, returning the
 # response.
-foul send(client: Client, port: Integer, method: String, path: String) -> Response<Binary> do
+foul send(client: Client, port: Integer, method: String, path: String) -> Net.HTTP.Response<Binary> do
   client.request(method, "http://127.0.0.1:${port}${path}", Headers.empty, Binary.empty).try
 end
 
 describe("Rodolfo builds a router") do
-  it("compiles route declarations") do
-    let router = build do
-      route "GET", "/" do |_| "home" end
-      route "POST", "/messages" do |_| "created" end
+  it("collects route declarations") do
+    let api = Rodolfo.router do
+      get "/" do |_| "home" end
+      post "/messages" do |_| "created" end
     end
 
-    Assert.equal(router.routes.count, 2)
+    Assert.equal(api.routes.count, 2)
   end
 
   it("preserves declaration order") do
-    let router = build do
-      route "GET", "/users/me" do |_| "me" end
-      route "GET", "/users/:id" do |env| env.param("id").try end
+    let api = Rodolfo.router do
+      get "/users/me" do |_| "me" end
+      get "/users/:id" do |env| env.param("id").try end
     end
 
-    Assert.equal(router.routes.map(&.path), ["/users/me", "/users/:id"])
+    Assert.equal(api.routes.map(&.path), ["/users/me", "/users/:id"])
   end
 
-  it("compiles a respond handler") do
-    let router = build do
-      respond "GET", "/health" do |_|
-        Response.text(200, "ok")
-      end
+  it("declares any method through route") do
+    let api = Rodolfo.router do
+      route "PROPFIND", "/files" do |_| Response.Empty {} end
     end
 
-    Assert.equal(router.routes.count, 1)
+    Assert.equal(api.routes.map(&.method), ["PROPFIND"])
+  end
+end
+
+# Deliberately named to collide with what a library's private helpers might be
+# called; the escaping case below proves they no longer do.
+let rendered(value: String) -> String = value
+let interleave(parts: [String], values: [String]) -> String = "${parts}${values}"
+let field(entries: [(String, String?)], name: String) -> String? = None
+
+describe("Rodolfo escapes markup") do
+  it("escapes the five characters that would end an element or attribute") do
+    Assert.equal(Rodolfo.escape("<b>"), "&lt;b&gt;")
+    Assert.equal(Rodolfo.escape("Tom & Jerry"), "Tom &amp; Jerry")
+    Assert.equal(Rodolfo.escape("\"quoted\""), "&quot;quoted&quot;")
+    Assert.equal(Rodolfo.escape("O'Neil"), "O&#39;Neil")
+  end
+
+  it("escapes an already-escaped string again, rather than guessing") do
+    Assert.equal(Rodolfo.escape("&lt;"), "&amp;lt;")
+  end
+
+  it("escapes what an html$ literal interpolates") do
+    let title = "<script>alert('x')</script>"
+    Assert.equal(
+      "${html$`<h1>${title}</h1>`}",
+      "<h1>&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;</h1>")
+  end
+
+  it("closes the attribute-escape hole") do
+    let value = "\" onfocus=\"steal()"
+    Assert.equal("${html$`<input value=\"${value}\">`}".contains?("\" onfocus=\"steal()"), false)
+  end
+
+  it("passes a Safe value through untouched, so html$ nests") do
+    let row = html$`<td>${"a & b"}</td>`
+    Assert.equal("${html$`<tr>${row}</tr>`}", "<tr><td>a &amp; b</td></tr>")
+  end
+
+  it("escapes nothing in a rawHTML$ literal") do
+    let css = "a > b { content: '&'; }"
+    Assert.equal("${rawHTML$`<style>${css}</style>`}", "<style>a > b { content: '&'; }</style>")
+  end
+
+  it("treats a safe() string as markup") do
+    Assert.equal("${html$`<p>${Rodolfo.safe("<b>bold</b>")}</p>`}", "<p><b>bold</b></p>")
+  end
+
+  it("renders a literal with no interpolation at all") do
+    Assert.equal("${html$`<hr>`}", "<hr>")
+  end
+
+  # An application function once won over a library's private one of the same
+  # name and arity, and Rodolfo escapes each interpolated value through a
+  # private `rendered`. This file defines `rendered`, `interleave`, and `field`
+  # at the top precisely to collide with those helpers; the case fails loudly
+  # if a name ever leaks out of `private do` again.
+  it("escapes even when the application defines its own helpers") do
+    Assert.equal("${html$`<p>${"<b>"}</p>`}", "<p>&lt;b&gt;</p>")
+  end
+
+  it("concatenates mapped markup with joined") do
+    let cells = ["a & b", "c"].map { |text| html$`<td>${text}</td>` }
+    Assert.equal("${html$`<tr>${Rodolfo.joined(cells)}</tr>`}",
+                 "<tr><td>a &amp; b</td><td>c</td></tr>")
+  end
+end
+
+describe("Rodolfo sends markup as a page") do
+  it("sends an html$ literal a route returns as a 200 text/html page") do
+    let api = Rodolfo.router do
+      get "/" do |_| html$`<h1>${"Books & Bits"}</h1>` end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(response.status.code, 200)
+    Assert.equal(header(response, "Content-Type"), Just("text/html; charset=utf-8"))
+    Assert.equal(response.body.to(String).try, "<h1>Books &amp; Bits</h1>")
+  end
+
+  it("still sends a bare String as text/plain, so the two do not blur") do
+    let api = Rodolfo.router do
+      get "/" do |_| "<h1>not markup</h1>" end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(header(response, "Content-Type"), Just("text/plain; charset=utf-8"))
+    Assert.equal(response.body.to(String).try, "<h1>not markup</h1>")
+  end
+
+  it("takes a status and headers through Response.HTML when markup is not enough") do
+    let api = Rodolfo.router do
+      get "/gone" do |_|
+        Response.HTML { status: 404, body: "${html$`<p>${"no & such"}</p>`}" }
+      end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/gone")
+    teardown(state)
+
+    Assert.equal(response.status.code, 404)
+    Assert.equal(response.body.to(String).try, "<p>no &amp; such</p>")
+  end
+end
+
+describe("Rodolfo reads query and form fields") do
+  it("decodes a query field the way a browser submits a GET form") do
+    let api = Rodolfo.router do
+      get "/books" do |env| "[${env.query("q").or("")}]" end
+    end
+    let state = boot(api)
+    let plus = send(state.client, state.port, "GET", "/books?q=and+tools")
+    let percent = send(state.client, state.port, "GET", "/books?q=and%20tools")
+    let literal = send(state.client, state.port, "GET", "/books?q=c%2B%2B")
+    let missing = send(state.client, state.port, "GET", "/books")
+    teardown(state)
+
+    Assert.equal(plus.body.to(String).try, "[and tools]")
+    Assert.equal(percent.body.to(String).try, "[and tools]")
+    Assert.equal(literal.body.to(String).try, "[c++]")
+    Assert.equal(missing.body.to(String).try, "[]")
+  end
+
+  it("keeps query fields in order, bare keys included") do
+    let api = Rodolfo.router do
+      get "/f" do |env| "${env.queryFields}" end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/f?tag=kex&tag=beam&debug")
+    teardown(state)
+
+    Assert.equal(response.body.to(String).try, "[(tag, Just(kex)), (tag, Just(beam)), (debug, None)]")
+  end
+
+  it("reads a form-urlencoded request body") do
+    let api = Rodolfo.router do
+      post "/books" do |env| "[${env.form("title").or("")}]" end
+    end
+    let state = boot(api)
+    let client = Client.open().try
+    let response = client.request(
+      "POST",
+      "http://127.0.0.1:${state.port}/books",
+      Headers.from([("Content-Type", "application/x-www-form-urlencoded")]).try,
+      "title=Programming+Kex".to(Binary).try).try
+    client.close().try
+    teardown(state)
+
+    Assert.equal(response.body.to(String).try, "[Programming Kex]")
+  end
+end
+
+describe("Rodolfo binds a port") do
+  # The default matters for safety, not just convenience: a port bound on every
+  # interface is reachable by every machine on the network. `background(port)`
+  # must stay on loopback, and only a written-out address may widen it.
+  it("binds loopback when given only a port, so the network cannot reach it") do
+    let api = Rodolfo.router do
+      get "/" do |_| "bound" end
+    end
+    let server = api.background(0).try
+    let bound = server.localAddress
+    server.stop().try
+
+    Assert.equal(bound.host, "127.0.0.1")
+  end
+
+  it("binds every interface when the address says so") do
+    let api = Rodolfo.router do
+      get "/" do |_| "bound" end
+    end
+    let server = api.background("0.0.0.0", 0).try
+    let bound = server.localAddress
+    server.stop().try
+
+    Assert.equal(bound.host, "0.0.0.0")
+  end
+
+  it("takes an address of your own") do
+    let api = Rodolfo.router do
+      get "/" do |_| "bound" end
+    end
+    let server = api.background("127.0.0.1", 0).try
+    let client = Client.open().try
+    let response = send(client, server.localAddress.port.value, "GET", "/")
+    client.close().try
+    server.stop().try
+
+    Assert.equal(response.body.to(String).try, "bound")
+  end
+
+  it("takes a port on its own, which stays on loopback") do
+    let api = Rodolfo.router do
+      get "/" do |_| "bound" end
+    end
+    let server = api.background(0).try
+    let client = Client.open().try
+    let response = send(client, server.localAddress.port.value, "GET", "/")
+    client.close().try
+    server.stop().try
+
+    Assert.equal(response.body.to(String).try, "bound")
   end
 end
 
 describe("Rodolfo serves requests") do
-  it("answers a text route with a 200 text/plain body") do
-    let router = build do
-      route "GET", "/" do |_| "Rodolfo says hello!" end
+  it("sends a bare string as a 200 text/plain body") do
+    let api = Rodolfo.router do
+      get "/" do |_| "Rodolfo says hello!" end
     end
-    let state = boot(router)
+    let state = boot(api)
     let response = send(state.client, state.port, "GET", "/")
     teardown(state)
 
@@ -89,12 +292,12 @@ describe("Rodolfo serves requests") do
   end
 
   it("extracts named route parameters") do
-    let router = build do
-      route "GET", "/hello/:name" do |env|
+    let api = Rodolfo.router do
+      get "/hello/:name" do |env|
         "Hello, ${env.param("name").try}!"
       end
     end
-    let state = boot(router)
+    let state = boot(api)
     let response = send(state.client, state.port, "GET", "/hello/Radar")
     teardown(state)
 
@@ -102,11 +305,11 @@ describe("Rodolfo serves requests") do
   end
 
   it("dispatches on HTTP method") do
-    let router = build do
-      route "GET", "/things" do |_| "list" end
-      route "POST", "/things" do |_| "created" end
+    let api = Rodolfo.router do
+      get "/things" do |_| "list" end
+      post "/things" do |_| "created" end
     end
-    let state = boot(router)
+    let state = boot(api)
     let list = send(state.client, state.port, "GET", "/things")
     let created = send(state.client, state.port, "POST", "/things")
     teardown(state)
@@ -116,43 +319,135 @@ describe("Rodolfo serves requests") do
     Assert.equal(created.body.to(String).try, "created")
   end
 
-  it("lets a respond handler set a custom status and headers") do
-    let router = build do
-      respond "POST", "/things" do |_|
-        Response.binary(
-          201,
-          "made".to(Binary).try,
-          Headers.from([("X-Created-By", "rodolfo")]).try)
+  it("sends Response.JSON as application/json") do
+    let api = Rodolfo.router do
+      get "/health" do |_|
+        Response.JSON { body: "{\"status\":\"ok\"}" }
       end
     end
-    let state = boot(router)
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/health")
+    teardown(state)
+
+    Assert.equal(response.status.code, 200)
+    Assert.equal(header(response, "Content-Type"), Just("application/json"))
+    Assert.equal(response.body.to(String).try, "{\"status\":\"ok\"}")
+  end
+
+  it("sends Response.HTML as text/html") do
+    let api = Rodolfo.router do
+      get "/" do |_| Response.HTML { body: "<h1>hi</h1>" } end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(header(response, "Content-Type"), Just("text/html; charset=utf-8"))
+    Assert.equal(response.body.to(String).try, "<h1>hi</h1>")
+  end
+
+  it("carries a reply's status and extra headers") do
+    let api = Rodolfo.router do
+      post "/things" do |_|
+        Response.Text {
+          status: 201,
+          body: "made",
+          headers: Headers.from([("X-Created-By", "rodolfo")]).try
+        }
+      end
+    end
+    let state = boot(api)
     let response = send(state.client, state.port, "POST", "/things")
     teardown(state)
 
     Assert.equal(response.status.code, 201)
     Assert.equal(response.body.to(String).try, "made")
-    Assert.equal(response.headers.get("X-Created-By"), Just("rodolfo"))
+    Assert.equal(header(response, "X-Created-By"), Just("rodolfo"))
   end
 
-  it("answers a respond text handler through the response path") do
-    let router = build do
-      respond "GET", "/health" do |_|
-        Response.text(200, "ok")
+  it("lets a reply's own Content-Type win over its kind") do
+    let api = Rodolfo.router do
+      get "/feed" do |_|
+        Response.Text {
+          body: "<rss/>",
+          headers: Headers.from([("Content-Type", "application/rss+xml")]).try
+        }
       end
     end
-    let state = boot(router)
-    let response = send(state.client, state.port, "GET", "/health")
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/feed")
     teardown(state)
 
-    Assert.equal(response.body.to(String).try, "ok")
-    Assert.equal(response.status.success?, true)
+    Assert.equal(header(response, "Content-Type"), Just("application/rss+xml"))
+  end
+
+  it("sends Response.Empty without a body") do
+    let api = Rodolfo.router do
+      delete "/things/:id" do |_| Response.Empty {} end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "DELETE", "/things/7")
+    teardown(state)
+
+    Assert.equal(response.status.code, 204)
+    Assert.equal(response.body.to(String).try, "")
+  end
+
+  it("sends Response.Redirect with a Location") do
+    let api = Rodolfo.router do
+      get "/old" do |_| Response.Redirect { location: "/new" } end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/old")
+    teardown(state)
+
+    Assert.equal(response.status.code, 302)
+    Assert.equal(header(response, "Location"), Just("/new"))
+  end
+
+  it("sends Response.Raw with its own content type") do
+    let api = Rodolfo.router do
+      get "/blob" do |_|
+        Response.Raw {
+          body: "\x00\x01".to(Binary).try,
+          contentType: "application/octet-stream"
+        }
+      end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/blob")
+    teardown(state)
+
+    Assert.equal(header(response, "Content-Type"), Just("application/octet-stream"))
+  end
+
+  it("turns a failed try inside a route into the reply the block rescues to") do
+    let api = Rodolfo.router do
+      get "/books/:id" do |env|
+        trying do
+          let id = Integer.parse(env.param("id").try).try
+          Response.JSON { body: "{\"id\":${id}}" }
+        rescue |e|
+          Response.JSON { status: 400, body: "{\"error\":\"${e.message}\"}" }
+        end
+      end
+    end
+    let state = boot(api)
+    let ok = send(state.client, state.port, "GET", "/books/42")
+    let bad = send(state.client, state.port, "GET", "/books/nope")
+    teardown(state)
+
+    Assert.equal(ok.status.code, 200)
+    Assert.equal(ok.body.to(String).try, "{\"id\":42}")
+    Assert.equal(bad.status.code, 400)
+    Assert.equal(bad.body.to(String).try, "{\"error\":\"invalid integer\"}")
   end
 
   it("returns 404 for an unrouted path") do
-    let router = build do
-      route "GET", "/" do |_| "home" end
+    let api = Rodolfo.router do
+      get "/" do |_| "home" end
     end
-    let state = boot(router)
+    let state = boot(api)
     let response = send(state.client, state.port, "GET", "/missing")
     teardown(state)
 
@@ -161,11 +456,11 @@ describe("Rodolfo serves requests") do
   end
 
   it("honours more specific routes over wildcards") do
-    let router = build do
-      route "GET", "/users/me" do |_| "me" end
-      route "GET", "/users/:id" do |env| env.param("id").try end
+    let api = Rodolfo.router do
+      get "/users/me" do |_| "me" end
+      get "/users/:id" do |env| env.param("id").try end
     end
-    let state = boot(router)
+    let state = boot(api)
     let me = send(state.client, state.port, "GET", "/users/me")
     let other = send(state.client, state.port, "GET", "/users/42")
     teardown(state)

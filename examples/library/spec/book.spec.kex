@@ -1,0 +1,48 @@
+# A book's own rules are pure, so they are checked without a socket or a
+# file: a book in and a draft or a line out.
+using Catalog.Book, only: [Book, BookId]
+using Catalog.Draft, only: [Draft]
+
+# A book with only the fields a case cares about spelled out.
+let shelved(id: BookId, title: String, author: String, year: Integer) -> Book do
+  Book { id: id, title: title, author: author, year: year }
+end
+
+let draft(title: String, author: String, year: String) -> Draft do
+  Draft { title: title, author: author, year: year }
+end
+
+describe("Book.drafted") do
+  it("turns a book back into the draft an edit form starts from") do
+    let back = shelved(1, "Dune", "Frank Herbert", 1965).drafted
+    assert(back == draft("Dune", "Frank Herbert", "1965"))
+  end
+end
+
+describe("Book.matches?") do
+  it("matches the title or the author, case-insensitively") do
+    let dune = shelved(1, "Dune", "Frank Herbert", 1965)
+    assert(dune.matches?("DUNE"))
+    assert(dune.matches?("herbert"))
+  end
+
+  it("matches an empty term, so the search box needs no special case") do
+    assert(shelved(1, "Dune", "Frank Herbert", 1965).matches?("   "))
+  end
+
+  it("does not match a term that occurs in neither field") do
+    assert(shelved(1, "Dune", "Frank Herbert", 1965).matches?("kex").falsy?)
+  end
+end
+
+describe("Book.asLine") do
+  it("renders the five tab-separated fields, lent as 1 or 0") do
+    assert(shelved(1, "Dune", "Frank Herbert", 1965).asLine == "1\tDune\tFrank Herbert\t1965\t0")
+    let lent = Book { id: 1, title: "Dune", author: "Frank Herbert", year: 1965, borrowed?: true }
+    assert(lent.asLine == "1\tDune\tFrank Herbert\t1965\t1")
+  end
+
+  it("replaces the characters the catalogue format reserves") do
+    assert(shelved(1, "Tab\there", "New\nline", 2000).asLine == "1\tTab here\tNew line\t2000\t0")
+  end
+end

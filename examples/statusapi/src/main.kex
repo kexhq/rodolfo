@@ -2,27 +2,33 @@ using JSON
 using Rodolfo
 
 main do
-  run do
-    respond "GET", "/health" do |_|
-      let body = JSON.stringify({ "status": "ok", "service": "catalog" })
-      let headers = Net.HTTP.Headers.empty
-        .set("Content-Type", "application/json")
-      Net.HTTP.Response.binary(200, body.to(Binary).try, headers)
+  let apiRouter = Rodolfo.router do
+    get "/health" do |_|
+      Response.JSON {
+        body: JSON.stringify({ "status": "ok", "service": "catalog" })
+      }
     end
 
-    respond "GET", "/api/books/:id" do |env|
-      let body = JSON.stringify({
-        "id": env.param("id").try,
-        "title": "Programming Kex",
-        "available": true
-      })
-      let headers = Net.HTTP.Headers.empty
-        .set("Content-Type", "application/json")
-      Net.HTTP.Response.binary(200, body.to(Binary).try, headers)
+    get "/api/books/:id" do |env|
+      let id = Integer.parse(env.param("id").try).try
+      Response.JSON {
+        body: JSON.stringify({
+          "id": id,
+          "title": "Programming Kex",
+          "available": true
+        })
+      }
+      rescue |e|
+        Response.JSON {
+          status: 400,
+          body: JSON.stringify({ "error": e.message })
+        }
     end
 
     post "/api/echo" do |env|
       env.request.body.to(String).try
     end
-  end.try
+  end
+
+  apiRouter.start(4000).try
 end

@@ -1,0 +1,46 @@
+# Form input as it arrives from a browser: three strings, none of them
+# trusted yet. `validate` reports what is wrong with a draft, and the shelf
+# only stores drafts it reported nothing about.
+module Catalog.Draft
+
+record Draft do
+  title : String = ""
+  author : String = ""
+  year : String = ""
+end
+
+# The oldest book the catalogue accepts, and the newest. Capitalized names
+# are constants; the compiler only resolves them qualified —
+# `Catalog.Draft.EARLIEST_YEAR` — the way the stdlib's `Console.RED` is read.
+let EARLIEST_YEAR = 1450
+let LATEST_YEAR = 2100
+
+make Draft do
+  # The problems with a draft, in field order; empty means it is valid.
+  validate :> [String]
+  let validate do
+    let titled = @title.blank? then ["Title is required."] else []
+    let credited = @author.blank? then ["Author is required."] else []
+    titled + credited + yearErrors(@year)
+  end
+
+  # The year a validated draft carries. A draft that never passed `validate`
+  # falls back to `EARLIEST_YEAR` rather than failing here, which is why the
+  # routes check the messages first.
+  yearOf :> Integer
+  let yearOf = @year.trim.to(Integer).or(Catalog.Draft.EARLIEST_YEAR)
+end
+
+private do
+  yearErrors : String -> [String]
+  let yearErrors(text) do
+    let range = "between ${Catalog.Draft.EARLIEST_YEAR} and ${Catalog.Draft.LATEST_YEAR}"
+    match text.trim.to(Integer) do
+      None => ["Year must be a whole number."]
+      Just(value) => inRange?(value) then [] else ["Year must be ${range}."]
+    end
+  end
+
+  inRange? : Integer -> Bool
+  let inRange?(value) = value >= Catalog.Draft.EARLIEST_YEAR && value <= Catalog.Draft.LATEST_YEAR
+end

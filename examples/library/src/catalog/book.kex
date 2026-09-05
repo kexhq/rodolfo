@@ -1,0 +1,53 @@
+# One book: the record the shelf stores, and what a single book knows how to
+# do — turn itself back into a draft, answer a search, and render itself as
+# one line of the catalogue file. The rules about many books live in
+# `books.kex`; the rules about untrusted form input live in `draft.kex`.
+module Catalog.Book
+
+using Catalog.Draft, only: [Draft]
+
+# The identifier the shelf gives a book: an integer in the file and in the
+# URLs, but its own name in the code, so it is never confused with a year or
+# a count.
+type BookId = Integer
+
+# One catalogue entry. `id` is assigned by the shelf, never by a request.
+record Book do
+  id : BookId
+  title : String
+  author : String
+  year : Integer
+  borrowed? : Bool = false
+end
+
+make Book do
+  # The draft an edit form starts from.
+  drafted :> Draft
+  let drafted = Draft {
+    title: @title,
+    author: @author,
+    year: "${@year}"
+  }
+
+  # Whether `term` occurs in the title or the author, case-insensitively. An
+  # empty term matches, so the search box needs no special case.
+  matches? :> String -> Bool
+  let matches?(term) do
+    let needle = term.trim.lowerCase
+    needle.empty? || @title.lowerCase.contains?(needle) || @author.lowerCase.contains?(needle)
+  end
+
+  # The book as one line of the catalogue file: five tab-separated fields.
+  asLine :> String
+  let asLine do
+    let lent = @borrowed? then "1" else "0"
+    ["${@id}", oneLine(@title), oneLine(@author), "${@year}", lent].join("\t")
+  end
+end
+
+private do
+  # `text` with the two characters the catalogue format reserves replaced,
+  # so a title can never split a record in two.
+  oneLine : String -> String
+  let oneLine(text) = text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
+end
