@@ -24,7 +24,7 @@ end
 # on the record rather than in a comparator means a plain `.sort` produces it.
 make Book, implement: Comparable do
   let compare(other: Book) -> Ordering do
-    other.year.compare(@year).thenBy { byTitle(@title, other.title) }
+    other.year.compare(@year).thenBy { @title.compare(other.title) }
   end
 
   # The draft an edit form starts from.
@@ -39,8 +39,8 @@ make Book, implement: Comparable do
   # empty term matches, so the search box needs no special case.
   matches? :> String -> Bool
   let matches?(term) do
-    let needle = term.trim.lowerCase
-    needle.empty? || @title.lowerCase.contains?(needle) || @author.lowerCase.contains?(needle)
+    let query = term.trim.lowerCase
+    query.empty? || @title.lowerCase.contains?(query) || @author.lowerCase.contains?(query)
   end
 
   # The book as one line of the catalogue file: five tab-separated fields.
@@ -55,13 +55,5 @@ make Book, implement: Comparable do
     # so a title can never split a record in two.
     oneLine :> String -> String
     let oneLine(text) = text.replace("\t", " ").replace("\r", " ").replace("\n", " ")
-
-    # `String` is not `Comparable`, so the tie-break spells the order out.
-    byTitle :> String -> String -> Ordering
-    let byTitle(left, right) do
-      return Less if left < right
-      return Greater if left > right
-      Equal
-    end
   end
 end

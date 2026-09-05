@@ -46,7 +46,7 @@ make [Book] do
   # nothing.
   lending :> BookId -> Bool -> [Book]
   let lending(id, borrowed?) do
-    this.map { |book| book.id == id then Book { ...book, borrowed?: borrowed? } else book }
+    this.map { |book| book.id == id then Book { ...book, borrowed? } else book }
   end
 
   # The id the next book gets: one past the highest in use, so removing a
