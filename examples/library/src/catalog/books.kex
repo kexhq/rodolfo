@@ -46,14 +46,14 @@ make [Book] do
   # nothing.
   lending :> BookId -> Bool -> [Book]
   let lending(id, borrowed?) do
-    this.map { |book| book.id == id then Book { ...book, borrowed?: borrowed? } else book }
+    this.map { |book| book.id == id then Book { ...book, borrowed? } else book }
   end
 
   # The id the next book gets: one past the highest in use, so removing a
   # book from the middle of the catalogue never hands its id to a different
   # book.
   nextId :> BookId
-  let nextId = this.reduce(0) { |highest, book| book.id > highest then book.id else highest } + 1
+  let nextId = maxId(this) + 1.as(BookId)
 
   # The catalogue as one tab-separated line per book.
   encoded :> String
@@ -74,6 +74,10 @@ let decoded(text) do
 end
 
 private do
+  # The highest id in use, or 0 for an empty catalogue.
+  maxId : [Book] -> BookId
+  let maxId(books) = books.reduce(0.as(BookId)) { |highest, book| book.id > highest then book.id else highest }
+
   # `book` with its editable fields rewritten from a validated draft. Its id
   # and lending state survive.
   rewritten : Book -> Draft -> Book
