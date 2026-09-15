@@ -113,6 +113,8 @@ entries. Each entry below is marked inline.
 
 ### 20. No server-side WebSocket upgrade — `Net.HTTP.WebSocket` is client-only
 
+Filed upstream as kexhq/kex#345.
+
 Found on `293a0b5` while scoping WebSocket route support for Rodolfo (the
 kind of thing Sinatra and Kemal both offer, and Rodolfo already borrows its
 shape from both).
@@ -608,6 +610,8 @@ never subtracted under an annotation.
 
 ### 17. Multi-clause functions silently drop clauses when the argument's static type is an abstract union
 
+Filed upstream as kexhq/kex#347.
+
 Found on `293a0b5` while converting `Rodolfo.respond` (this repo's
 `src/rodolfo.kex`) from one function with an internal `match` to Kex's other
 documented style for the same thing — separate `let f(Pattern1) = ...`
@@ -674,6 +678,8 @@ tends to happen.
 
 ### 18. Two records in one module sharing a field name corrupts the other's accessor at runtime
 
+Filed upstream as kexhq/kex#348.
+
 Found on `293a0b5` while adding `Rodolfo.Router`'s scope-flattening step
 (`src/rodolfo.kex`). Two records — `Definition` (`method`, `path`, `handler`)
 and a second one introduced alongside it, `Flat` (`method`, `path`, `plugs`,
@@ -713,6 +719,8 @@ they collide, not just a warning.
 
 ### 19. A single-argument call without a trailing string, block, or its own parens does not parse inside `Block<[A]>`
 
+Filed upstream as kexhq/kex#349.
+
 Found on `293a0b5` alongside #18. `Block<[A]>` collection (`docs/dsl.md`)
 recognizes `verb "literal" do ... end` and, per this file's own good news,
 `verb someCall(withArgs)` — the callee's own trailing `)` is enough. It does
@@ -739,6 +747,8 @@ Workaround: `src/rodolfo.kex`'s `plug` and `scope` doc comments write every
 example call with explicit outer parens.
 
 ### 21. A named function passed as a value loses its type — or its body — when the function returns another function
+
+Filed upstream as kexhq/kex#350.
 
 Found on `293a0b5` while answering "why can't a plug be a normal `let
 name(inner) = ...` function instead of a `do |inner| do |env| ... end end`
