@@ -743,8 +743,12 @@ wrong token and cost real time to trace back to the argument shape. Wrapping
 the whole call in parens — `plug(errorsPlug)`, `plug(blocker)` — always
 works and is what `Rodolfo.plug`'s own doc examples now use.
 
-Workaround: `src/rodolfo.kex`'s `plug` and `scope` doc comments write every
-example call with explicit outer parens.
+The same thing hits a two-argument call, not just one: `mount "/admin"
+adminRouter` (a string literal, then a bare reference — neither the call nor
+its last argument ends in its own `)`) fails identically, blaming `mount`.
+
+Workaround: `src/rodolfo.kex`'s `plug`, `scope`, and `mount` doc comments
+write every example call with explicit outer parens.
 
 ### 21. A named function passed as a value loses its type — or its body — when the function returns another function
 

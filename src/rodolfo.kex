@@ -377,6 +377,28 @@ record Router do
   entries : [Entry]
 end
 
+# Nests an already-built +Router+ under a path prefix, so a large
+# application's routes can be declared as separate, independently testable
+# routers and composed at the top rather than all written inline in one
+# `router do ... end` body. Equivalent to `scope`, but the group's
+# declarations were collected elsewhere instead of written at the call site.
+#
+# @param prefix [String] prepended to every path in `sub`, direct or nested
+# @param sub [Router] the sub-router to nest
+# @return [Entry] the declaration
+#
+# @example
+#   let admin = Rodolfo.router do
+#     get "/stats" do |_| "42 requests" end
+#   end
+#
+#   let api = Rodolfo.router do
+#     mount("/admin", admin)
+#     get "/" do |_| "home" end
+#   end
+mount : String -> Router -> Entry
+let mount(prefix, sub) = Scope { prefix: prefix, children: sub.entries }
+
 # Collects a block of route, plug, and scope declarations into a router.
 #
 # Declaration order decides matches, so a fixed path goes before the capture
@@ -406,6 +428,24 @@ make Router do
   # @return [[Route]] the routes, as declared
   routes :> [Route]
   foul routes = this.httpRouter.routes
+
+  # Combines two routers' declarations, unprefixed — `this`'s routes first.
+  # Each side keeps its own plugs scoped to its own routes: they are not
+  # flattened into one shared list, which would leak each side's plugs onto
+  # the other's routes (an unprefixed `mount`, in effect). For nesting one
+  # router under a path prefix instead, use +mount+.
+  #
+  # @param other [Router] the router to append
+  # @return [Router] both routers' declarations, `this` first
+  #
+  # @example Combining routers built separately
+  #   let combined = coreRoutes + adminRoutes + healthRoutes
+  let +(other: This) -> This = Router {
+    entries: [
+      Scope { prefix: "", children: @entries },
+      Scope { prefix: "", children: other.entries }
+    ]
+  }
 
   # Serves forever on loopback, on port 3000.
   #

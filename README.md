@@ -167,6 +167,31 @@ or scope's — so `/admin/stats` above runs `logged`, then `poweredBy`, then
 `requireToken`, then the handler. See `examples/plugs` for the runnable
 version of this.
 
+## Composing routers
+
+A `Router` is a value, so a large application's routes don't have to live in
+one `router do ... end` body. `mount` nests an already-built router under a
+path prefix — like `scope`, but the declarations were collected elsewhere:
+
+```rb
+let admin = Rodolfo.router do
+  get "/stats" do |_| "42 requests" end
+end
+
+let api = Rodolfo.router do
+  mount("/admin", admin)
+  get "/" do |_| "home" end
+end
+```
+
+`+` combines two routers' routes unprefixed. Each side keeps its own plugs
+scoped to its own routes — `router1 + router2` does not flatten both into one
+shared scope, so a plug on `router2` never reaches `router1`'s routes:
+
+```rb
+let combined = coreRoutes + adminRoutes + healthRoutes
+```
+
 ## Serving
 
 `start` blocks, which is what a `main` wants; `background` returns a

@@ -579,3 +579,75 @@ describe("Rodolfo composes plugs") do
     Assert.equal(secret.status.code, 403)
   end
 end
+
+describe("Rodolfo composes routers") do
+  it("nests an already-built router under a path prefix with mount") do
+    let admin = Rodolfo.router do
+      get "/stats" do |_| "stats" end
+    end
+    let api = Rodolfo.router do
+      mount("/admin", admin)
+      get "/" do |_| "home" end
+    end
+    let state = boot(api)
+    let root = send(state.client, state.port, "GET", "/")
+    let stats = send(state.client, state.port, "GET", "/admin/stats")
+    teardown(state)
+
+    Assert.equal(root.body.to(String).try, "home")
+    Assert.equal(stats.body.to(String).try, "stats")
+  end
+
+  it("keeps a mounted router's own plugs scoped to just its own routes") do
+    let admin = Rodolfo.router do
+      plug(blocked)
+      get "/stats" do |_| "stats" end
+    end
+    let api = Rodolfo.router do
+      mount("/admin", admin)
+      get "/" do |_| "home" end
+    end
+    let state = boot(api)
+    let root = send(state.client, state.port, "GET", "/")
+    let stats = send(state.client, state.port, "GET", "/admin/stats")
+    teardown(state)
+
+    Assert.equal(root.status.code, 200)
+    Assert.equal(stats.status.code, 403)
+  end
+
+  it("combines two routers' routes with +, unprefixed") do
+    let core = Rodolfo.router do
+      get "/" do |_| "home" end
+    end
+    let health = Rodolfo.router do
+      get "/health" do |_| "ok" end
+    end
+    let api = core + health
+    let state = boot(api)
+    let root = send(state.client, state.port, "GET", "/")
+    let health_ = send(state.client, state.port, "GET", "/health")
+    teardown(state)
+
+    Assert.equal(root.body.to(String).try, "home")
+    Assert.equal(health_.body.to(String).try, "ok")
+  end
+
+  it("keeps each side's own plugs from leaking onto the other's routes with +") do
+    let open_ = Rodolfo.router do
+      get "/open" do |_| "open" end
+    end
+    let locked = Rodolfo.router do
+      plug(blocked)
+      get "/locked" do |_| "locked" end
+    end
+    let combined = open_ + locked
+    let state = boot(combined)
+    let open = send(state.client, state.port, "GET", "/open")
+    let secret = send(state.client, state.port, "GET", "/locked")
+    teardown(state)
+
+    Assert.equal(open.status.code, 200)
+    Assert.equal(secret.status.code, 403)
+  end
+end
