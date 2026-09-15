@@ -1,0 +1,75 @@
+# Composable request/response plugs: code that runs around every route in a
+# router or scope, without repeating it inside each handler.
+#
+# Open /, then /admin/stats with and without ?token=let-me-in.
+using Rodolfo
+
+# An around-style plug: runs before calling the handler it wraps, and after.
+# It never inspects the reply's shape, so it works unchanged for a bare
+# String, JSON, HTML, or anything else a route returns.
+logged : Rodolfo.Plug
+let logged = do |inner|
+  do |env|
+    let method = env.request.method
+    let path = env.request.target.source
+    IO.printLine("--> ${method} ${path}")
+    let reply = inner(env)
+    IO.printLine("<-- ${method} ${path}")
+    reply
+  end
+end
+
+# A plug that changes the reply on the way back out — the "after" half of
+# around-style, without a "before" half. Only `Response.Text` carries the
+# header onward; everything else passes through unchanged.
+poweredBy : Rodolfo.Plug
+let poweredBy = do |inner|
+  do |env|
+    match inner(env) do
+      Response.Text { status, body, headers } =>
+        Response.Text {
+          status: status,
+          body: body,
+          headers: headers.add("X-Powered-By", "Rodolfo").or(headers)
+        }
+      reply => reply
+    end
+  end
+end
+
+# A plug factory: `requireToken("secret")` builds a plug that halts with 401
+# unless the query string carries a matching `token`. Halting is simply
+# never calling `inner` — there is no separate "stop" signal to thread
+# through.
+requireToken : String -> Rodolfo.Plug
+let requireToken(expected) = do |inner|
+  do |env|
+    if env.query("token") == Just(expected)
+      inner(env)
+    else
+      Response.Text { status: 401, body: "missing or wrong token" }
+    end
+  end
+end
+
+main do
+  let site = Rodolfo.router do
+    plug(logged)
+    plug(poweredBy)
+
+    get "/" do |_|
+      Response.Text { body: "Open /admin/stats?token=let-me-in" }
+    end
+
+    scope "/admin" do
+      plug(requireToken("let-me-in"))
+
+      get "/stats" do |_|
+        Response.Text { body: "42 requests served" }
+      end
+    end
+  end
+
+  IO.printLine("serving on http://localhost:3000")
+  site.start(3000).try
+end

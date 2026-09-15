@@ -15,6 +15,59 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-15, against `kex 0.4.0-beta.3 (293a0b5)`
+
+`../kex` moved well past `9ecd0f6` — built locally as `/home/akos/kex/kex/build/kex`.
+Two findings, in opposite directions.
+
+**#1/#2 still reproduce**, now against the rewritten `serving` API (a
+`serving` block is declared on a record and its methods are now `slot`s
+returning `Reply<T>`/`Void`; a process is started with `Process.spawn`, not
+`Counter.start`). A minimal repro: a `Store` module with a `serving Counter`
+process, imported by a `main.kex` that also `using Rodolfo` and calls
+`counter.add(n)` from inside a `get "/add/:n" do |env| ... end` route. Calling
+the same slot directly from `main` works (`5`, then `8`); calling it from
+inside the route handler crashes the server process on the first request:
+
+```
+** {'function not exported',
+       [{'Kex.Store',add,[{'Store.Counter',0},5,#{}],[]},
+        {kex_intrinsic_process,handle_call,3, ...
+```
+
+Exactly the shape the original entries describe, just with the new `serving`
+spelling. `examples/library` keeps `src/shelf.kex`'s tab-separated-file
+workaround rather than a real process store.
+
+**New: #17, multi-clause overloaded functions silently drop clauses when the
+call site's argument type is an abstract union rather than a concrete type**
+— see its own entry below. Found while converting `respond` (in this repo's
+`src/rodolfo.kex`) from one function with an internal `match` to Kex's
+multi-clause `let f(Pattern1) = ...; let f(Pattern2) = ...` style: every
+direct call from `main` with a literal record dispatched correctly, but the
+exact same function called from inside the route-handler closure — where the
+argument's static type is `Reply`, not any one variant — always ran the
+*first* clause's body regardless of the value's actual shape. `--emit-core`
+confirms only one of nine clauses reached the compiled module at all.
+Reverted to a single `foul respond(reply: Reply, route: String) do match
+reply do ... end end` in `src/rodolfo.kex`, which is unaffected and passes.
+
+## Re-verified 2026-09-13, against `kex 0.4.0-beta.2 (9ecd0f6)`
+
+`../kex` moved well past `331cbb5` — the one item this checks, #272, was fixed
+by `7d227b0` ("Fix imports": `pureFnArities` now also records a function's
+qualified name at the same registration site that records its bare one, so
+`callNeedsContext` matches a `using`-imported pure call under either
+spelling). Re-run against the exact upstream repro rather than a trimmed
+standalone one this time: `spec/rodolfo.spec.kex` itself (`using Rodolfo` +
+`using Net.HTTP, only: [Client, Server, ServerOptions, Headers, Context,
+Request, Status]`, the same shape the issue was filed from) now passes in
+full — 36 passed, 0 failed, `get`/`post` included — on BEAM, where the
+`erlc`-time failure actually lived (the tree-walk backend never reproduced
+this one, since capability-context lowering is a BEAM-codegen concern).
+`examples/library`'s five spec files (67 examples total, matching the count
+above) still pass unchanged. **#272 is fixed — closing upstream.**
+
 ## Re-verified 2026-09-05, against `kex 0.4.0-beta.2 (331cbb5)`
 
 `../kex` moved 6 commits past `5a088fe` — `1908e23` (free-function overloads),
@@ -55,6 +108,63 @@ whatever came back fixed; its `spec/` suite (62 examples) and a manual
 Fixed: #3, #4, #6, #7, #8, #10, #12, and Ctrl+C. Still reproduces: #1, #2, #9.
 #5 is moot and #11 is intended behavior rather than a defect — see their
 entries. Each entry below is marked inline.
+
+## Feature requests
+
+### 20. No server-side WebSocket upgrade — `Net.HTTP.WebSocket` is client-only
+
+Filed upstream as kexhq/kex#345.
+
+Found on `293a0b5` while scoping WebSocket route support for Rodolfo (the
+kind of thing Sinatra and Kemal both offer, and Rodolfo already borrows its
+shape from both).
+
+`src/stdlib/net/http/websocket.kex` implements exactly one side of RFC 6455:
+`WebSocket.connect(url)` opens an outbound connection and gives back a
+`Connection` with `send`, `receiveMessage`, `session`, `close`, `closed?`.
+There is nothing to *accept* an incoming handshake — no upgrade response
+type, no way for a `Net.HTTP.Server` route handler to take over the
+connection. `Net.HTTP.Response` only builds `binary`/`text`/`empty`, and the
+server-side intrinsic (`runtime/src/kex_intrinsic_nethttpserver.erl`) has no
+upgrade path at all; the WebSocket intrinsic
+(`kex_intrinsic_netwebsocket.erl`) is the client handshake exclusively
+(computing `Sec-WebSocket-Key`, validating `Sec-WebSocket-Accept`).
+
+This isn't a surprise gap — `docs/net-plan.md` already designs it and lists
+it as missing:
+
+```
+| WebSocket | Partial | Verified ws/wss client handshake, ... | Server
+upgrades, raw frames, heartbeat, reconnecting client, scripted mock, browser
+implementation |
+```
+
+with a sketch of the intended shape (`docs/net-plan.md:670-687`):
+
+```kex
+router.get("/socket") do |request, context|
+  authenticate(request).map do |principal|
+    WebSocket.upgrade(request) do |handshake|
+      if handshake.subprotocols.contains?("chat.v2") then
+        Accept({ |socket| serveChat(principal, socket) }, headers: Headers.empty, subprotocol: Just("chat.v2"))
+      else
+        Reject(Response.text(426, "chat.v2 required"))
+      end
+    end
+  end
+end
+```
+
+No workaround from the Rodolfo side: `Net.Socket.TCP.listen`/`accept` does
+give raw byte-level access, so a hand-rolled RFC 6455 server (handshake,
+masking, fragmentation, close codes) is technically reachable, but only as
+its own listener on a separate port — there is no way to peek at a
+connection before `Net.HTTP.Server` claims it, so sharing one port with
+ordinary HTTP routes would mean reimplementing HTTP/1.1 request parsing from
+scratch too. Given `net-plan.md` already designs the real thing, duplicating
+a partial version in Rodolfo now would need to be thrown away once
+`WebSocket.upgrade` ships. Rodolfo route-level support (`ws "/path" do |socket| ... end`, mirroring `get`/`post`)
+is blocked on this landing in Kex first.
 
 ## Blocking
 
@@ -238,7 +348,8 @@ original three-way `Draft.title expects String, but got Net.HTTP.Router`
 error is gone. `src/main.kex` now imports `using Net.HTTP, only: [Headers,
 Response]` and spells `Response<Binary>`, `Headers.from`, `Response.binary`,
 and `Response.empty` unqualified instead of fully qualifying every use.
-kexhq/kex#272 can likely be closed once this is confirmed upstream.
+kexhq/kex#272 (filed from this entry) is now confirmed fixed too — see the
+2026-09-13 re-verification above.
 
 `using Net.HTTP, only: [Headers, Response]` alongside `using Rodolfo` makes
 `values.get(...)` resolve to `Net.HTTP.Router`'s `get` make-method, producing
@@ -496,6 +607,208 @@ Workaround: drop the annotation from the function that does the arithmetic and
 let it infer — `let span = HIGH - LOW` alone compiles and prints `650`.
 `examples/library` is unaffected: its constants are compared and interpolated,
 never subtracted under an annotation.
+
+### 17. Multi-clause functions silently drop clauses when the argument's static type is an abstract union
+
+Filed upstream as kexhq/kex#347.
+
+Found on `293a0b5` while converting `Rodolfo.respond` (this repo's
+`src/rodolfo.kex`) from one function with an internal `match` to Kex's other
+documented style for the same thing — separate `let f(Pattern1) = ...`
+declarations, one per shape, checked top-to-bottom (`docs/pattern-matching.md`
+§ Multi-Clause Functions).
+
+Called directly, every clause worked:
+
+```kex
+foul respond(reply: String, route: String) -> ... = ...
+foul respond(Response.JSON { status, body, headers }, route: String) -> ... = ...
+foul respond(Response.Text { status, body, headers }, route: String) -> ... = ...
+# ... Response.HTML, Response.Raw, Response.Empty, Response.Redirect, Any — nine clauses total
+
+respond(Response.JSON { body: "{}" }, "r")   # => the JSON clause's body, correctly
+respond("hi", "r")                           # => the String clause's body, correctly
+```
+
+`Rodolfo`'s router compiles each route to a closure that calls `respond` on
+whatever the application's handler returned — a value statically typed as
+the seven-way union `Reply`, not any one variant, because which variant it is
+is only known once the handler actually runs:
+
+```kex
+handler: do |request, context|
+  respond(definition.handler(Context { request: request, context: context }), route)
+end
+```
+
+Every route that returned anything other than a bare `String` crashed the
+server on its first request — 10 of `spec/rodolfo.spec.kex`'s 36 cases,
+every one of them returning a `Response.*` record. `--emit-core` on the
+module shows why: the nine declared clauses compiled down to *one* function
+clause, keeping only the first declaration's body —
+
+```erlang
+'respond'/3 =
+  fun (Reply, Route, _ir_Ctx279) ->
+    call 'Kex.Net.HTTP.Response':'text'(200, Reply, _ir_Ctx279)
+```
+
+— the `String` clause's body, called unconditionally regardless of the
+argument's actual shape. So multi-clause dispatch is resolved per call
+site at compile time from the argument's *static* type, not by a runtime
+tag check: a call site that already knows the concrete type (a literal
+`Response.JSON { ... }` in `main`) picks the right clause and looks
+correct; a call site that only knows the argument as the wider union
+compiles to something else entirely, with no diagnostic pointing at the
+gap either at `-C` or at `-r`.
+
+`match` does not have this problem — it dispatches on the value's runtime
+tag regardless of the scrutinee's static type, which is exactly why the
+original `respond` (one function, an internal `match`) always worked.
+
+Workaround: `Rodolfo.respond` in `src/rodolfo.kex` is one `foul` function with
+an internal `match`, not multi-clause overloads — see the comment above it.
+Multi-clause style is fine for a function whose caller always supplies a
+concretely-typed argument (`redirectTo`, a few lines above it in the same
+file, is exactly that: called with a literal `Redirection` variant at every
+call site); reach for `match` instead whenever the value being dispatched on
+can only be a wider union at the call site that matters, and stack traces
+through a handler, callback, or process boundary are exactly where that
+tends to happen.
+
+### 18. Two records in one module sharing a field name corrupts the other's accessor at runtime
+
+Filed upstream as kexhq/kex#348.
+
+Found on `293a0b5` while adding `Rodolfo.Router`'s scope-flattening step
+(`src/rodolfo.kex`). Two records — `Definition` (`method`, `path`, `handler`)
+and a second one introduced alongside it, `Flat` (`method`, `path`, `plugs`,
+`handler`) — declared in the same module with identical field names. Building
+a `Flat` and reading it straight back miscompiles:
+
+```kex
+record Definition do
+  method : String
+  path : String
+end
+
+record Flat do
+  method : String   # same field name as Definition's
+  path : String
+  extra : String
+end
+
+let toFlat(d: Definition) = Flat { method: d.method, path: d.path, extra: "x" }
+```
+
+Calling `.method` on the resulting `Flat` doesn't error and doesn't return
+the right thing either — reading it back through the accessor generated for
+the OTHER record with that field name returns `Undefined method: method for
+Tuple` or silently reads the wrong value at runtime, depending on which
+accessor wins; `kex -C` reports nothing. This is a sibling to the
+`plug`/`PlugEntry.plug` collision that crashed `erlc` outright earlier in
+this file (a top-level function and a record field sharing a name) — here it
+is two records' fields sharing a name, and the failure is quieter: a bad
+runtime value instead of a compile-time crash.
+
+Workaround: `Flat` was changed to a plain tuple (`(String, String, [Plug],
+Handler)`) instead of a record, sidestepping accessor generation entirely —
+see `flattened`/`compileFlat` in `src/rodolfo.kex`. More generally: give two
+records in the same module distinct field names, or expect a real bug if
+they collide, not just a warning.
+
+### 19. A single-argument call without a trailing string, block, or its own parens does not parse inside `Block<[A]>`
+
+Filed upstream as kexhq/kex#349.
+
+Found on `293a0b5` alongside #18. `Block<[A]>` collection (`docs/dsl.md`)
+recognizes `verb "literal" do ... end` and, per this file's own good news,
+`verb someCall(withArgs)` — the callee's own trailing `)` is enough. It does
+not recognize a bare one-argument call whose argument is a plain reference
+rather than a call:
+
+```kex
+someList : Block<[Entry]> -> ...
+
+let errorsPlug = Rodolfo.Plugs.errors()   # a value, already built
+let usesIt = Rodolfo.router do
+  plug errorsPlug                          # error: Undefined identifier: plug
+end
+```
+
+`plug Rodolfo.Plugs.errors()` (the callee ends in its own `)`) parses; `plug
+errorsPlug` and `plug blocker` (a bare name, no call at all) do not — both
+report the *callee* (`plug`) as an undefined identifier, which points at the
+wrong token and cost real time to trace back to the argument shape. Wrapping
+the whole call in parens — `plug(errorsPlug)`, `plug(blocker)` — always
+works and is what `Rodolfo.plug`'s own doc examples now use.
+
+The same thing hits a two-argument call, not just one: `mount "/admin"
+adminRouter` (a string literal, then a bare reference — neither the call nor
+its last argument ends in its own `)`) fails identically, blaming `mount`.
+
+Workaround: `src/rodolfo.kex`'s `plug`, `scope`, and `mount` doc comments
+write every example call with explicit outer parens.
+
+### 21. A named function passed as a value loses its type — or its body — when the function returns another function
+
+Filed upstream as kexhq/kex#350.
+
+Found on `293a0b5` while answering "why can't a plug be a normal `let
+name(inner) = ...` function instead of a `do |inner| do |env| ... end end`
+value?" It can be written that way and `kex -C` says nothing is wrong; it
+just does not work, in two different ways depending on how it is passed.
+
+Minimal repro, no Rodolfo involved — a function returning a function, passed
+by name to something expecting that type:
+
+```kex
+let addPair(x: Integer) -> (Integer -> Integer) = do |y| x + y end
+
+check : (Integer -> Integer) -> Integer
+let check(f) = f(10)
+
+main do
+  IO.printLine("${check(addPair)}")
+end
+```
+
+**Passed bare** (`check(addPair)`): `kex -C` says "No errors found." — and
+`kex -r` crashes the Erlang build instead of running:
+
+```
+kex_nf4: unbound variable 'AddPair' in main/0
+error: erlc failed
+```
+
+The type checker is satisfied that `addPair` is usable as an `Integer ->
+Integer`, but codegen never actually captures it as a value at the call
+site — `-C` gives false confidence here, the same shape as #17.
+
+**Passed via `~`** (`check(~addPair)`), the operator that exists precisely
+for turning a named function into a value: this reaches the type checker,
+but the checker has flattened the reference's curried shape into the wrong
+arity —
+
+```
+error: `check` expects argument 1 to be Integer -> Integer, but got Integer -> Integer -> Integer
+
+check : (Integer -> Integer) -> Integer
+```
+
+`~addPair`'s real type is `Integer -> (Integer -> Integer)` — one parameter,
+returning a function — but the checker reports it as the 2-ary `Integer ->
+Integer -> Integer`. In the `Rodolfo.Plug` case (`Handler -> Handler`,
+i.e. `(Context -> Reply) -> (Context -> Reply)`) the same reconstruction
+loses more and the reported type is `... -> Unknown` instead of a flattened
+arity, but it is the same failure: `~name` does not preserve "my own
+parameter list" versus "my return type, which happens to be an arrow" for a
+curried/higher-order function.
+
+Workaround: write a plug as a value — `let name = do |inner| do |env| ...
+end end` — never as a named function passed by name or by `~`. A closure
+literal is never routed through either broken path. See the `Plug` type's
+doc comment in `src/rodolfo.kex` for the full shape and rationale.
 
 ## Ctrl+C does not stop a running server
 

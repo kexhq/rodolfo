@@ -198,12 +198,66 @@ type Reply = String
 # A route block: the request environment in, a reply out.
 type Handler = Context -> Reply
 
+# A composable request/response wrapper. A plug receives the handler it
+# wraps (everything declared after it in its own scope, and every route
+# beneath a nested scope) and returns a new handler around it.
+#
+# Halting a request is simply not calling the wrapped handler — there is no
+# separate "stop" signal to thread through, and running code both before and
+# after the wrapped handler (response headers, timing, translating an
+# exception into a reply) is the same shape as running code only before or
+# only after.
+#
+# A plug is written as a value (`let name = do |inner| ... end`), never as a
+# named function passed by name or by `~` — both break for a curried
+# function that returns another function, which is exactly `Plug`'s shape.
+# Passed bare, `kex -C` accepts it but `kex -r` fails to build ("unbound
+# variable"); passed as `~name`, it reaches the type checker with the wrong
+# arity reconstructed for the reference. A closure literal sidesteps both —
+# see docs/kex-issues.md #21.
+#
+# @example A plug that adds a header to every response it lets through
+#   poweredBy : Plug
+#   let poweredBy = do |inner|
+#     do |env|
+#       match inner(env) do
+#         Response.Text { status, body, headers } =>
+#           Response.Text { status: status, body: body, headers: headers.add("X-Powered-By", "Rodolfo").or(headers) }
+#         reply => reply
+#       end
+#     end
+#   end
+#
+# @example A plug that halts instead of calling the wrapped handler
+#   blocked : Plug
+#   let blocked = do |inner| do |env| Response.Text { status: 403, body: "forbidden" } end end
+type Plug = Handler -> Handler
+
 # One declaration in a Rodolfo route list.
 record Definition do
   method : String
   path : String
   handler : Handler
 end
+
+# Wraps a `plug` declaration so it can sit in the same `router do ... end` or
+# `scope do ... end` body as route declarations and nested scopes — see
+# +Entry+.
+record PlugEntry do
+  wrapper : Plug
+end
+
+# A path-prefixed, plug-scoped group of declarations. Its own `plug`
+# declarations apply to every route inside it, direct or nested, stacked
+# after whatever scope contains it — see +scope+.
+record Scope do
+  prefix : String
+  children : [Entry]
+end
+
+# One statement inside a `router do ... end` or `scope do ... end` body: a
+# route, a plug, or a nested scope.
+type Entry = Definition | PlugEntry | Scope
 
 # Declares a route for any HTTP method.
 #
@@ -213,11 +267,11 @@ end
 # @param method [String] the HTTP method, uppercase
 # @param path [String] the route path, with +:name+ captures
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
+# @return [Entry] the declaration
 #
 # @example
 #   route "PROPFIND", "/files" do |_| Response.Empty {} end
-route : String -> String -> Handler -> Definition
+route : String -> String -> Handler -> Entry
 let route(method, path, handler) = Definition {
   method: method,
   path: path,
@@ -228,72 +282,129 @@ let route(method, path, handler) = Definition {
 #
 # @param path [String] the route path, with +:name+ captures
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
+# @return [Entry] the declaration
 #
 # @example
 #   get "/hello/:name" do |env| "Hello, ${env.param("name").try}!" end
-get : String -> Handler -> Definition
+get : String -> Handler -> Entry
 let get(path, handler) = route("GET", path, handler)
 
 # Declares a +POST+ route.
 #
 # @param path [String] the route path
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
-post : String -> Handler -> Definition
+# @return [Entry] the declaration
+post : String -> Handler -> Entry
 let post(path, handler) = route("POST", path, handler)
 
 # Declares a +PUT+ route.
 #
 # @param path [String] the route path
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
-put : String -> Handler -> Definition
+# @return [Entry] the declaration
+put : String -> Handler -> Entry
 let put(path, handler) = route("PUT", path, handler)
 
 # Declares a +PATCH+ route.
 #
 # @param path [String] the route path
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
-patch : String -> Handler -> Definition
+# @return [Entry] the declaration
+patch : String -> Handler -> Entry
 let patch(path, handler) = route("PATCH", path, handler)
 
 # Declares a +DELETE+ route.
 #
 # @param path [String] the route path
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
-delete : String -> Handler -> Definition
+# @return [Entry] the declaration
+delete : String -> Handler -> Entry
 let delete(path, handler) = route("DELETE", path, handler)
 
 # Declares a +HEAD+ route.
 #
 # @param path [String] the route path
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
-head : String -> Handler -> Definition
+# @return [Entry] the declaration
+head : String -> Handler -> Entry
 let head(path, handler) = route("HEAD", path, handler)
 
 # Declares an +OPTIONS+ route.
 #
 # @param path [String] the route path
 # @param handler [Handler] the route block
-# @return [Definition] the declaration
-options : String -> Handler -> Definition
+# @return [Entry] the declaration
+options : String -> Handler -> Entry
 let options(path, handler) = route("OPTIONS", path, handler)
+
+# Adds a plug to the enclosing `router do ... end` or `scope do ... end`
+# body. Applies to every route declared in that body, direct or nested,
+# regardless of whether the `plug` line comes before or after them —
+# wrapping order among plugs in the same body follows their own declaration
+# order, first-declared outermost.
+#
+# @param wrapper [Plug] the plug
+# @return [Entry] the declaration
+#
+# @example
+#   Rodolfo.router do
+#     plug(Rodolfo.Plugs.errors())
+#     get "/" do |_| "hello" end
+#   end
+plug : Plug -> Entry
+let plug(wrapper) = PlugEntry { wrapper: wrapper }
+
+# Groups declarations under a path prefix and, if it has any `plug` lines of
+# its own, a plug stack that applies only inside the group — stacked after
+# whatever scope contains it.
+#
+# @param prefix [String] prepended to every path declared inside, direct or nested
+# @param entries [Block<[Entry]>] routes, plugs, and nested scopes
+# @return [Entry] the declaration
+#
+# @example
+#   Rodolfo.router do
+#     scope "/api" do
+#       plug(requireApiKey())
+#       get "/books" do |_| ... end
+#     end
+#   end
+scope : String -> Block<[Entry]> -> Entry
+let scope(prefix, entries) = Scope { prefix: prefix, children: entries() }
 
 # A route list, ready to serve. Nothing is bound until you +start+ it.
 record Router do
-  definitions : [Definition]
+  entries : [Entry]
 end
 
-# Collects a block of route declarations into a router.
+# Nests an already-built +Router+ under a path prefix, so a large
+# application's routes can be declared as separate, independently testable
+# routers and composed at the top rather than all written inline in one
+# `router do ... end` body. Equivalent to `scope`, but the group's
+# declarations were collected elsewhere instead of written at the call site.
+#
+# @param prefix [String] prepended to every path in `sub`, direct or nested
+# @param sub [Router] the sub-router to nest
+# @return [Entry] the declaration
+#
+# @example
+#   let admin = Rodolfo.router do
+#     get "/stats" do |_| "42 requests" end
+#   end
+#
+#   let api = Rodolfo.router do
+#     mount("/admin", admin)
+#     get "/" do |_| "home" end
+#   end
+mount : String -> Router -> Entry
+let mount(prefix, sub) = Scope { prefix: prefix, children: sub.entries }
+
+# Collects a block of route, plug, and scope declarations into a router.
 #
 # Declaration order decides matches, so a fixed path goes before the capture
 # that would also match it.
 #
-# @param definitions [Block<[Definition]>] the route declarations
+# @param entries [Block<[Entry]>] the route, plug, and scope declarations
 # @return [Router] the collected routes
 #
 # @example
@@ -301,8 +412,8 @@ end
 #     get "/books/me" do |_| "me" end
 #     get "/books/:id" do |env| env.param("id").try end
 #   end
-router : Block<[Definition]> -> Router
-let router(definitions) = Router { definitions: definitions() }
+router : Block<[Entry]> -> Router
+let router(entries) = Router { entries: entries() }
 
 make Router do
   # The Net.HTTP router these declarations compile to, for the rare caller
@@ -310,13 +421,31 @@ make Router do
   #
   # @return [Net.HTTP.Router] the compiled router
   httpRouter :> Net.HTTP.Router
-  foul httpRouter = compileRoutes(@definitions)
+  foul httpRouter = compileRoutes(@entries)
 
   # The compiled routes, in declaration order.
   #
   # @return [[Route]] the routes, as declared
   routes :> [Route]
   foul routes = this.httpRouter.routes
+
+  # Combines two routers' declarations, unprefixed — `this`'s routes first.
+  # Each side keeps its own plugs scoped to its own routes: they are not
+  # flattened into one shared list, which would leak each side's plugs onto
+  # the other's routes (an unprefixed `mount`, in effect). For nesting one
+  # router under a path prefix instead, use +mount+.
+  #
+  # @param other [Router] the router to append
+  # @return [Router] both routers' declarations, `this` first
+  #
+  # @example Combining routers built separately
+  #   let combined = coreRoutes + adminRoutes + healthRoutes
+  let +(other: This) -> This = Router {
+    entries: [
+      Scope { prefix: "", children: @entries },
+      Scope { prefix: "", children: other.entries }
+    ]
+  }
 
   # Serves forever on loopback, on port 3000.
   #
@@ -431,38 +560,100 @@ private do
 
   # Foul because the handlers it wraps serve requests, and a closure calling
   # foul code makes its enclosing context foul.
-  compileRoutes : [Definition] -> Net.HTTP.Router
-  foul compileRoutes(definitions) = Net.HTTP.Router {
-    routes: definitions.map(~compileRoute)
+  compileRoutes : [Entry] -> Net.HTTP.Router
+  foul compileRoutes(entries) = Net.HTTP.Router {
+    routes: flattened(entries, "", []).map(~compileFlat)
   }
 
-  compileRoute : Definition -> Route
-  foul compileRoute(definition: Definition) = Route {
-    method: definition.method,
-    path: definition.path,
-    handler: do |request, context|
-      respond(definition.handler(Context { request: request, context: context }))
+  # A flattened route: a scope tree collapses to one of these per
+  # `Definition`, its plug stack accumulated top-down and its path prefixed
+  # by every scope it sat inside. A tuple, not a record — a `Flat` record
+  # with its own `method`/`path` fields hit a codegen bug the moment another
+  # record in this module (`Definition`) declared fields of the same name;
+  # see docs/kex-issues.md #18.
+  flattened : [Entry] -> String -> [Plug] -> [(String, String, [Plug], Handler)]
+  let flattened(entries, prefix, inherited) do
+    let stack = inherited + plugsOf(entries)
+    routesAndScopesOf(entries).flatMap { |entry|
+      match entry do
+        Definition { method, path, handler } => [(method, joinedPath(prefix, path), stack, handler)]
+        Scope { prefix: childPrefix, children } => flattened(children, joinedPath(prefix, childPrefix), stack)
+      end
+    }
+  end
+
+  plugsOf : [Entry] -> [Plug]
+  let plugsOf(entries) = entries.flatMap { |entry|
+    match entry do
+      PlugEntry { wrapper } => [wrapper]
+      _ => []
     end
   }
 
+  routesAndScopesOf : [Entry] -> [Entry]
+  let routesAndScopesOf(entries) = entries.filter { |entry|
+    match entry do
+      PlugEntry { wrapper } => false
+      _ => true
+    end
+  }
+
+  # Joins a scope's prefix onto a path (or a scope's prefix onto its
+  # enclosing scope's), tolerating either side's slash or lack of one.
+  joinedPath : String -> String -> String
+  let joinedPath(prefix, path) do
+    let base = prefix.endsWith?("/") then prefix.take(prefix.length - 1) else prefix
+    let rest = path.startsWith?("/") then path else "/${path}"
+    let combined = "${base}${rest}"
+    combined.empty? then "/" else combined
+  end
+
+  compileFlat : (String, String, [Plug], Handler) -> Route
+  foul compileFlat((method, path, plugs, base)) = Route {
+    method: method,
+    path: path,
+    handler: do |request, context|
+      let handler = wrapped(plugs, base)
+      respond(
+        handler(Context { request: request, context: context }),
+        "${method} ${path}"
+      )
+    end
+  }
+
+  # Wraps `handler` with `plugs`, first-declared outermost: the first plug's
+  # own code runs first (and, for an around-style plug, last) and the last
+  # plug sits closest to `handler`.
+  wrapped : [Plug] -> Handler -> Handler
+  let wrapped([], handler) = handler
+  let wrapped([p | rest], handler) = p(wrapped(rest, handler))
+
   # Turns whatever the route block returned into an HTTP response.
-  foul respond(reply: Reply) -> Net.HTTP.Response<Binary> do
+  #
+  # A route is declared to return a +Reply+, but nothing stops a handler
+  # from `.try`-ing its way to some other value (an escaped +Option+, for
+  # instance) — see kexhq/rodolfo#7. Only a +String+ takes the plain-text
+  # path; anything else is a bug in the application, logged and answered as
+  # a 500 rather than silently served as 200 text.
+  #
+  # One function with a `match`, not multi-clause overloads: overloaded
+  # `respond` clauses dispatched correctly when called directly from `main`
+  # but crashed with a BEAM `:if_clause` error when called from the closure
+  # a served request actually invokes — see docs/kex-issues.md #17.
+  foul respond(reply: Reply, route: String) -> Net.HTTP.Response<Binary> do
     match reply do
-      Rodolfo.Markup.Safe { markup } =>
-        textual(200, markup, Headers.empty, "text/html; charset=utf-8")
-      Response.JSON { status, body, headers } =>
-        textual(status, body, headers, "application/json")
-      Response.Text { status, body, headers } =>
-        textual(status, body, headers, "text/plain; charset=utf-8")
-      Response.HTML { status, body, headers } =>
-        textual(status, body, headers, "text/html; charset=utf-8")
-      Response.Raw { status, body, headers, contentType } =>
-        Net.HTTP.Response.binary(status, body, typed(headers, contentType))
-      Response.Empty { status, headers } =>
-        Net.HTTP.Response.binary(status, Binary.empty, headers)
-      Response.Redirect { status, location, headers } =>
-        Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
-      text => Net.HTTP.Response.text(200, "${text}")
+      text: String => Net.HTTP.Response.text(200, text)
+      Rodolfo.Markup.Safe { markup } => textual(200, markup, Headers.empty, "text/html; charset=utf-8")
+      Rodolfo.Response.JSON { status, body, headers } => textual(status, body, headers, "application/json")
+      Rodolfo.Response.Text { status, body, headers } => textual(status, body, headers, "text/plain; charset=utf-8")
+      Rodolfo.Response.HTML { status, body, headers } => textual(status, body, headers, "text/html; charset=utf-8")
+      Rodolfo.Response.Raw { status, body, headers, contentType } => Net.HTTP.Response.binary(status, body, typed(headers, contentType))
+      Rodolfo.Response.Empty { status, headers } => Net.HTTP.Response.binary(status, Binary.empty, headers)
+      Rodolfo.Response.Redirect { status, location, headers } => Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
+      other => do
+        IO.printError("Rodolfo: ${route} returned a value that is not a Reply: ${other}")
+        Net.HTTP.Response.text(500, "Internal Server Error")
+      end
     end
   end
 

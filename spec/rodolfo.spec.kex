@@ -469,3 +469,185 @@ describe("Rodolfo serves requests") do
     Assert.equal(other.body.to(String).try, "42")
   end
 end
+
+# A plug that lets the response through, adding a header — the around-style
+# case: code after `inner` runs, not just before it.
+poweredBy : Rodolfo.Plug
+let poweredBy = do |inner|
+  do |env|
+    match inner(env) do
+      Response.Text { status, body, headers } =>
+        Response.Text { status: status, body: body, headers: headers.add("X-Powered-By", "Rodolfo").or(headers) }
+      reply => reply
+    end
+  end
+end
+
+# A plug that never calls `inner` — halting.
+blocked : Rodolfo.Plug
+let blocked = do |inner| do |env| Response.Text { status: 403, body: "forbidden" } end end
+
+# Records which plug ran, in call order, so ordering can be asserted on.
+marked : String -> Rodolfo.Plug
+let marked(tag) = do |inner|
+  do |env|
+    match inner(env) do
+      Response.Text { status, body, headers } => Response.Text { status: status, body: "${tag}(${body})", headers: headers }
+      reply => reply
+    end
+  end
+end
+
+describe("Rodolfo composes plugs") do
+  it("wraps every route in the router with a global plug") do
+    let api = Rodolfo.router do
+      plug(poweredBy)
+      get "/" do |_| Response.Text { body: "hi" } end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(header(response, "X-Powered-By"), Just("Rodolfo"))
+  end
+
+  it("halts the request when a plug does not call its handler") do
+    let api = Rodolfo.router do
+      plug(blocked)
+      get "/" do |_| "hi" end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(response.status.code, 403)
+    Assert.equal(response.body.to(String).try, "forbidden")
+  end
+
+  it("runs plugs in declaration order, first-declared outermost") do
+    let api = Rodolfo.router do
+      plug(marked("a"))
+      plug(marked("b"))
+      get "/" do |_| Response.Text { body: "core" } end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(response.body.to(String).try, "a(b(core))")
+  end
+
+  it("prefixes paths declared inside a scope, direct and nested") do
+    let api = Rodolfo.router do
+      get "/" do |_| "root" end
+
+      scope "/api" do
+        get "/books" do |_| "books" end
+
+        scope "/v2" do
+          get "/books" do |_| "v2 books" end
+        end
+      end
+    end
+    let state = boot(api)
+    let root = send(state.client, state.port, "GET", "/")
+    let books = send(state.client, state.port, "GET", "/api/books")
+    let v2 = send(state.client, state.port, "GET", "/api/v2/books")
+    teardown(state)
+
+    Assert.equal(root.body.to(String).try, "root")
+    Assert.equal(books.body.to(String).try, "books")
+    Assert.equal(v2.body.to(String).try, "v2 books")
+  end
+
+  it("stacks a scope's own plugs after the router's, applying only inside the scope") do
+    let api = Rodolfo.router do
+      plug(marked("outer"))
+      get "/open" do |_| Response.Text { body: "open" } end
+
+      scope "/admin" do
+        plug(blocked)
+        get "/secret" do |_| "secret" end
+      end
+    end
+    let state = boot(api)
+    let open = send(state.client, state.port, "GET", "/open")
+    let secret = send(state.client, state.port, "GET", "/admin/secret")
+    teardown(state)
+
+    Assert.equal(open.body.to(String).try, "outer(open)")
+    Assert.equal(secret.status.code, 403)
+  end
+end
+
+describe("Rodolfo composes routers") do
+  it("nests an already-built router under a path prefix with mount") do
+    let admin = Rodolfo.router do
+      get "/stats" do |_| "stats" end
+    end
+    let api = Rodolfo.router do
+      mount("/admin", admin)
+      get "/" do |_| "home" end
+    end
+    let state = boot(api)
+    let root = send(state.client, state.port, "GET", "/")
+    let stats = send(state.client, state.port, "GET", "/admin/stats")
+    teardown(state)
+
+    Assert.equal(root.body.to(String).try, "home")
+    Assert.equal(stats.body.to(String).try, "stats")
+  end
+
+  it("keeps a mounted router's own plugs scoped to just its own routes") do
+    let admin = Rodolfo.router do
+      plug(blocked)
+      get "/stats" do |_| "stats" end
+    end
+    let api = Rodolfo.router do
+      mount("/admin", admin)
+      get "/" do |_| "home" end
+    end
+    let state = boot(api)
+    let root = send(state.client, state.port, "GET", "/")
+    let stats = send(state.client, state.port, "GET", "/admin/stats")
+    teardown(state)
+
+    Assert.equal(root.status.code, 200)
+    Assert.equal(stats.status.code, 403)
+  end
+
+  it("combines two routers' routes with +, unprefixed") do
+    let core = Rodolfo.router do
+      get "/" do |_| "home" end
+    end
+    let health = Rodolfo.router do
+      get "/health" do |_| "ok" end
+    end
+    let api = core + health
+    let state = boot(api)
+    let root = send(state.client, state.port, "GET", "/")
+    let health_ = send(state.client, state.port, "GET", "/health")
+    teardown(state)
+
+    Assert.equal(root.body.to(String).try, "home")
+    Assert.equal(health_.body.to(String).try, "ok")
+  end
+
+  it("keeps each side's own plugs from leaking onto the other's routes with +") do
+    let open_ = Rodolfo.router do
+      get "/open" do |_| "open" end
+    end
+    let locked = Rodolfo.router do
+      plug(blocked)
+      get "/locked" do |_| "locked" end
+    end
+    let combined = open_ + locked
+    let state = boot(combined)
+    let open = send(state.client, state.port, "GET", "/open")
+    let secret = send(state.client, state.port, "GET", "/locked")
+    teardown(state)
+
+    Assert.equal(open.status.code, 200)
+    Assert.equal(secret.status.code, 403)
+  end
+end

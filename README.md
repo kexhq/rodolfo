@@ -101,6 +101,97 @@ Kex attaches `rescue` to named functions, not to blocks, so a bare
 `rescue` directly inside `do |env| ... end` is a syntax error — `trying` is
 the form that works there.
 
+## Plugs
+
+A `plug` wraps every route declared in the same `router` or `scope`, so a
+check that would otherwise be repeated inside each handler — response
+headers, request logging, an auth gate — is written once. Write a plug as a
+value (`let name = do |inner| ... end`), never as a named function passed by
+name or by `~` — both currently break for a function that returns a function,
+which is exactly `Plug`'s shape (`Handler -> Handler`); see
+`docs/kex-issues.md` #21 if you're curious what breaks:
+
+```rb
+poweredBy : Rodolfo.Plug
+let poweredBy = do |inner|
+  do |env|
+    match inner(env) do
+      Response.Text { status, body, headers } =>
+        Response.Text { status: status, body: body, headers: headers.add("X-Powered-By", "Rodolfo").or(headers) }
+      reply => reply
+    end
+  end
+end
+```
+
+`inner` is the handler (or the next plug in) being wrapped. Calling it and
+using the result — as above — is an *around*-style plug: code can run before
+`inner`, after it, or both, which is also how a request-logging plug looks.
+Not calling `inner` at all is how a plug halts a request:
+
+```rb
+requireToken : String -> Rodolfo.Plug
+let requireToken(expected) = do |inner|
+  do |env|
+    if env.query("token") == Just(expected)
+      inner(env)
+    else
+      Response.Text { status: 401, body: "missing or wrong token" }
+    end
+  end
+end
+```
+
+`plug(...)` adds one to the router or scope it's declared in — parenthesized,
+since a bare `plug someValue` without a trailing call or string doesn't
+parse. Plugs run in declaration order, first-declared outermost:
+
+```rb
+Rodolfo.router do
+  plug(logged)                    # every route, wrapping everything below
+  plug(poweredBy)
+
+  get "/" do |_| Response.Text { body: "hello" } end
+
+  scope "/admin" do
+    plug(requireToken("let-me-in"))   # only routes inside this scope
+
+    get "/stats" do |_| Response.Text { body: "42 requests served" } end
+  end
+end
+```
+
+`scope "/prefix" do ... end` also prefixes every path declared inside it,
+nested scopes included, and its own plugs stack after the enclosing router's
+or scope's — so `/admin/stats` above runs `logged`, then `poweredBy`, then
+`requireToken`, then the handler. See `examples/plugs` for the runnable
+version of this.
+
+## Composing routers
+
+A `Router` is a value, so a large application's routes don't have to live in
+one `router do ... end` body. `mount` nests an already-built router under a
+path prefix — like `scope`, but the declarations were collected elsewhere:
+
+```rb
+let admin = Rodolfo.router do
+  get "/stats" do |_| "42 requests" end
+end
+
+let api = Rodolfo.router do
+  mount("/admin", admin)
+  get "/" do |_| "home" end
+end
+```
+
+`+` combines two routers' routes unprefixed. Each side keeps its own plugs
+scoped to its own routes — `router1 + router2` does not flatten both into one
+shared scope, so a plug on `router2` never reaches `router1`'s routes:
+
+```rb
+let combined = coreRoutes + adminRoutes + healthRoutes
+```
+
 ## Serving
 
 `start` blocks, which is what a `main` wants; `background` returns a
@@ -145,6 +236,8 @@ application would:
 - `examples/statusapi` — JSON health and catalog API, with a rescued route
 - `examples/website` — server-rendered HTML responses
 - `examples/requestinfo` — reusable route-handler wrapping
+- `examples/plugs` — request logging, response headers, and a scoped
+  token-gated admin route, using `plug` and `scope`
 - `examples/library` — a book-management CRUD interface: list, search, add,
   edit, delete, lend, and return, in plain HTML forms
 
