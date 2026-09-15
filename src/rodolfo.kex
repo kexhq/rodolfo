@@ -8,7 +8,7 @@
 #
 #   main do
 #     let site = Rodolfo.router do
-#       get "/" do 
+#       get "/" do |_|
 #        "Hello from Kex!"
 #       end
 #

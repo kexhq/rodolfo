@@ -811,6 +811,50 @@ end end` — never as a named function passed by name or by `~`. A closure
 literal is never routed through either broken path. See the `Plug` type's
 doc comment in `src/rodolfo.kex` for the full shape and rationale.
 
+### 22. A block can't ignore a parameter it doesn't need — `|_|` (or a named, unused binding) is mandatory everywhere
+
+Filed upstream as kexhq/kex#354.
+
+Found on `293a0b5` while asking "does a Rodolfo route handler need to bind
+the request context it never uses?" There is no way to write a
+zero-parameter block and have it satisfy a function type expecting one
+argument — the missing parameter is never implicitly discarded, no matter
+how obviously unused it would be. Not a `Handler`/Rodolfo quirk: the same
+failure hits the stdlib's own block-taking functions.
+
+```kex
+[1, 2, 3].each do
+  IO.printLine("tick")
+end
+# error: `each` expects argument 2 to be A -> Void, but got () -> Void
+
+3.times do
+  IO.printLine("hi")
+end
+# error: `times` expects argument 2 to be Integer -> Void, but got () -> Void
+
+get "/" do
+  "Hello from Kex!"
+end
+# error: `get` expects argument 2 to be Context -> Reply, but got () -> String
+```
+
+All three work with an explicit discard — `.each do |_| ... end`, `.times do
+|_| ... end`, `get "/" do |_| ... end` — which is exactly why `src/rodolfo.kex`
+and `README.md`'s examples all write `|_|` even where the value is never
+used. `Integer#times` is the sharpest case: the index is routinely
+irrelevant ("do this 3 times"), so this isn't a stretched edge case — it's
+the common one.
+
+An overload at the call-site library level — `get` accepting either
+`Context -> Reply` or `() -> Reply` — looked like a possible workaround, but
+didn't resolve cleanly either (the two candidates didn't unify the way a
+manual dispatch would expect), so this isn't something a caller can paper
+over on their own.
+
+Workaround: none. Every block argument needs an explicit binding for every
+parameter position the function type declares, used or not.
+
 ## Ctrl+C does not stop a running server
 
 **Fixed** on `5a088fe`, by `85be62e` ("Attempt to fix SIGINT" — the name is
