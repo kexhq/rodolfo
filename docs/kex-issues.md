@@ -717,38 +717,39 @@ see `flattened`/`compileFlat` in `src/rodolfo.kex`. More generally: give two
 records in the same module distinct field names, or expect a real bug if
 they collide, not just a warning.
 
-### 19. A single-argument call without a trailing string, block, or its own parens does not parse inside `Block<[A]>`
+### 19. A call without a trailing block needs parens — this is the design, not a defect
 
-Filed upstream as kexhq/kex#349.
-
-Found on `293a0b5` alongside #18. `Block<[A]>` collection (`docs/dsl.md`)
-recognizes `verb "literal" do ... end` and, per this file's own good news,
-`verb someCall(withArgs)` — the callee's own trailing `)` is enough. It does
-not recognize a bare one-argument call whose argument is a plain reference
-rather than a call:
+**Retracted** — filed upstream as kexhq/kex#349, then closed after a
+direct nudge (thanks) to re-check the premise. There is no bare
+whitespace-juxtaposition call syntax in Kex outside the `verb "literal" do
+... end` / `verb "literal" { ... }` trailing-block sugar. The original entry
+below claimed `verb someCall(withArgs)` — the argument ending in its own
+`)` — parses bare while only a plain reference argument doesn't; that
+distinction doesn't exist. Neither parses, and the split I thought I saw was
+an artifact of not having tried a same-shaped case without a trailing block:
 
 ```kex
-someList : Block<[Entry]> -> ...
-
-let errorsPlug = Rodolfo.Plugs.errors()   # a value, already built
-let usesIt = Rodolfo.router do
-  plug errorsPlug                          # error: Undefined identifier: plug
-end
+let takeOne(x: Integer) -> Integer = x + 1
+main do
+  let result = takeOne 5   # compiles — but `result` is the *function value*
+end                         # `takeOne`, and `5` is a separate, silently
+                             # discarded statement, not an argument
 ```
 
-`plug Rodolfo.Plugs.errors()` (the callee ends in its own `)`) parses; `plug
-errorsPlug` and `plug blocker` (a bare name, no call at all) do not — both
-report the *callee* (`plug`) as an undefined identifier, which points at the
-wrong token and cost real time to trace back to the argument shape. Wrapping
-the whole call in parens — `plug(errorsPlug)`, `plug(blocker)` — always
-works and is what `Rodolfo.plug`'s own doc examples now use.
+```kex
+get "/hi" helloHandler     # error: Undefined identifier: get
+get("/hi", helloHandler)   # fine
+```
 
-The same thing hits a two-argument call, not just one: `mount "/admin"
-adminRouter` (a string literal, then a bare reference — neither the call nor
-its last argument ends in its own `)`) fails identically, blaming `mount`.
-
-Workaround: `src/rodolfo.kex`'s `plug`, `scope`, and `mount` doc comments
-write every example call with explicit outer parens.
+`get "/hi" helloHandler` — a string argument *and* a bare reference, no
+trailing block — fails exactly like `plug errorsPlug` did; `get "/path" do
+|_| ... end` only ever worked because of the trailing block, not because its
+first argument is a string literal. So: any call without a trailing block
+needs full parens around its arguments, full stop, everywhere — not a
+`Block<[A]>` quirk, not specific to one argument shape. `plug`, `scope`, and
+`mount`'s doc comments in `src/rodolfo.kex` write every example call with
+explicit parens because that's simply what a call without a trailing block
+requires, not to route around a defect.
 
 ### 21. A named function passed as a value loses its type — or its body — when the function returns another function
 
