@@ -66,15 +66,15 @@ so the usual case is a body and nothing else:
 | `Response.Redirect { location }` | a `Location` header | 302 |
 
 ```rb
-get "/health" do
+get "/health" do |_|
   Response.JSON { body: JSON.stringify({ "status": "ok" }) }
 end
 
-post "/things" do
+post "/things" do |_|
   Response.Text {
     status: 201,
     body: "made",
-    headers: Net.HTTP.Headers.empty.set("X-Created-By", "rodolfo")
+    headers: Net.HTTP.Headers.empty.add("X-Created-By", "rodolfo").try
   }
 end
 ```
