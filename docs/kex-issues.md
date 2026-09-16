@@ -878,6 +878,56 @@ over on their own.
 Workaround: none. Every block argument needs an explicit binding for every
 parameter position the function type declares, used or not.
 
+### 23. `Net.Socket` + `Net.HTTP.WebSocket` crash `erlc` — blocks WebSocket routes on a real server
+
+Filed upstream as kexhq/kex#360.
+
+Found on `cc5c195` immediately after #20 shipped, trying to build a `ws`
+(WebSocket route) DSL function on top of it — Rodolfo already `using
+Net.Socket` for its ordinary HTTP server, and adding `Net.HTTP.WebSocket`
+crashes `erlc` before any code runs, let alone a `ws` route being hit:
+
+```kex
+using Net.Socket
+using Net.HTTP.WebSocket
+
+main do
+  IO.printLine("compiled fine")
+end
+```
+
+```
+exception error: {key_exists,{b_local,{b_literal,close},2}}
+  in function  gb_trees:insert_1/4 (gb_trees.erl:363)
+  ...
+error: erlc failed
+```
+
+`Net.Socket.TCP` and `Net.HTTP.WebSocket.Connection` each have their own
+`close`/`closed?` methods, and having both in the compiled program's module
+graph collides at the `erlc` SSA pass — the same class as #18, except this
+time both sides are in kex's own stdlib, so there is no name on the
+application side to rename.
+
+Worse than #18: the trigger is fragile and not fixable by adding names to
+scope reliably. Pulling `Net.HTTP`'s `Client` into scope alongside the other
+two imports makes the 7-line repro above compile and run — but the same
+trick, applied to Rodolfo itself (which also touches `Rodolfo.Markup`,
+`Rodolfo.Response`, `URI`, ...), did not: same crash, a different colliding
+name (`closed?` instead of `close`) depending on exactly what else was
+compiled alongside it. And the bug isn't gated on runtime use at all —
+merely *declaring* `ws`/`WsDefinition`/`Socket` types and a `compileWs`
+function in `src/rodolfo.kex`, with no application anywhere declaring an
+actual `ws` route, was enough to crash the entire existing spec suite, none
+of which touches WebSocket.
+
+Workaround: none found. A `ws` DSL function was written, type-checked
+cleanly, and then reverted out of `src/rodolfo.kex` entirely — its presence
+alone breaks the whole framework's build, not just WebSocket-route usage.
+Rodolfo has no WebSocket route support until this is fixed upstream; #20
+being fixed did not unblock it. Same shape as #1/#2: the defect decided the
+architecture, not the other way around.
+
 ## Ctrl+C does not stop a running server
 
 **Fixed** on `5a088fe`, by `85be62e` ("Attempt to fix SIGINT" — the name is
