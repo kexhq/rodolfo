@@ -113,7 +113,12 @@ entries. Each entry below is marked inline.
 
 ### 20. No server-side WebSocket upgrade — `Net.HTTP.WebSocket` is client-only
 
-Filed upstream as kexhq/kex#345.
+**Fixed** on `cc5c195` (merged via kexhq/kex#355). `WebSocket.upgrade`
+shipped matching the `net-plan.md` sketch quoted below almost exactly —
+confirmed by running kex's own `examples/websocket_chat.kex` against a
+clean, isolated build of `main`: a real `serving`-backed chat session
+answers over an actual upgraded connection, no mocks. Rodolfo route-level
+support (`ws "/path" do |socket| ... end`) is unblocked; not yet built.
 
 Found on `293a0b5` while scoping WebSocket route support for Rodolfo (the
 kind of thing Sinatra and Kemal both offer, and Rodolfo already borrows its
@@ -753,7 +758,19 @@ requires, not to route around a defect.
 
 ### 21. A named function passed as a value loses its type — or its body — when the function returns another function
 
-Filed upstream as kexhq/kex#350.
+Filed upstream as kexhq/kex#350. **Partially retracted** — the primary
+repro below (`addPair`/`check`) was never a real bug: `addPair`'s honest
+type is `Integer -> (Integer -> Integer)`, which never matched what `check`
+wanted, and the current build's error message makes that plain by reporting
+the correct (no longer flattened) structure — `check(addPair)`, no `~` at
+all, fails identically. The `check(~addPair)` half of this entry is
+therefore not evidence of anything. What's still real: `plug(~poweredBy)`,
+where `Handler`'s return type is Rodolfo's actual multi-variant, cross-module
+`Reply`, still fails via `kex -r` (not `-C`) with the type reconstructed as
+`... -> Unknown`. A same-shaped same-module 3-variant union does not
+reproduce, so the trigger is narrower than "curried functions" — something
+about a cross-module and/or larger union specifically, not isolated further.
+Re-verified on `cc5c195`; see the correction comment on kexhq/kex#350.
 
 Found on `293a0b5` while answering "why can't a plug be a normal `let
 name(inner) = ...` function instead of a `do |inner| do |env| ... end end`
@@ -812,6 +829,12 @@ literal is never routed through either broken path. See the `Plug` type's
 doc comment in `src/rodolfo.kex` for the full shape and rationale.
 
 ### 22. A block can't ignore a parameter it doesn't need — `|_|` (or a named, unused binding) is mandatory everywhere
+
+**Fixed** on `cc5c195` (merged via kexhq/kex#359). Re-verified directly:
+`3.times do IO.printLine("hi") end` now runs with no `|_|`. `|_|` is no
+longer required anywhere in Rodolfo's own examples or docs, but nothing
+needed migrating — it was never wrong to keep writing it, just no longer
+mandatory, so the existing `|_|`-carrying examples stay as-is.
 
 Filed upstream as kexhq/kex#354.
 
