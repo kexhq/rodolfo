@@ -55,6 +55,7 @@ separate code path over the same signature shape. Net effect for Rodolfo is
 unchanged — a plug still has to be written as a closure literal
 (`let name = do |inner| do |env| ... end end`), never as a named function
 passed by name or by `~`. Nothing in `src/rodolfo.kex` changed for this entry.
+Filed upstream as kexhq/kex#366 (split from #350 at that issue's own request).
 
 **#1/#2 (serving) and #17 (multi-clause abstract-union dispatch) are
 unchanged** — re-run against their own standalone repros, still reproduce
@@ -814,7 +815,9 @@ requires, not to route around a defect.
 typing info") fixed curried-result-type printing and bare-reference typing
 but not the arity-declaration check, which still misreads a parenthesized
 `(A -> B) -> (C -> D)` signature. Workaround unchanged: a plug stays a
-closure literal, never a named function passed by name or by `~`.
+closure literal, never a named function passed by name or by `~`. This
+narrower case is now tracked as its own issue, kexhq/kex#366 — #350 was left
+closed for exactly this handoff (see its closing comment, quoted below).
 
 Filed upstream as kexhq/kex#350. **Partially retracted** — the primary
 repro below (`addPair`/`check`) was never a real bug: `addPair`'s honest
