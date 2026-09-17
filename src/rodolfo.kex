@@ -259,6 +259,16 @@ end
 # route, a plug, or a nested scope.
 type Entry = Definition | PlugEntry | Scope
 
+# A flattened route: a scope tree collapses to one of these per
+# `Definition`, its plug stack accumulated top-down and its path prefixed by
+# every scope it sat inside — see `flattened`.
+record Flat do
+  method : String
+  path : String
+  plugs : [Plug]
+  handler : Handler
+end
+
 # Declares a route for any HTTP method.
 #
 # The named verbs below cover the usual ones; reach for this when the method is
@@ -565,18 +575,14 @@ private do
     routes: flattened(entries, "", []).map(~compileFlat)
   }
 
-  # A flattened route: a scope tree collapses to one of these per
-  # `Definition`, its plug stack accumulated top-down and its path prefixed
-  # by every scope it sat inside. A tuple, not a record — a `Flat` record
-  # with its own `method`/`path` fields hit a codegen bug the moment another
-  # record in this module (`Definition`) declared fields of the same name;
-  # see docs/kex-issues.md #18.
-  flattened : [Entry] -> String -> [Plug] -> [(String, String, [Plug], Handler)]
+  # Collapses a scope tree into one `Flat` per `Definition`.
+  flattened : [Entry] -> String -> [Plug] -> [Flat]
   let flattened(entries, prefix, inherited) do
     let stack = inherited + plugsOf(entries)
     routesAndScopesOf(entries).flatMap { |entry|
       match entry do
-        Definition { method, path, handler } => [(method, joinedPath(prefix, path), stack, handler)]
+        Definition { method, path, handler } =>
+          [Flat { method: method, path: joinedPath(prefix, path), plugs: stack, handler: handler }]
         Scope { prefix: childPrefix, children } => flattened(children, joinedPath(prefix, childPrefix), stack)
       end
     }
@@ -608,8 +614,8 @@ private do
     combined.empty? then "/" else combined
   end
 
-  compileFlat : (String, String, [Plug], Handler) -> Route
-  foul compileFlat((method, path, plugs, base)) = Route {
+  compileFlat : Flat -> Route
+  foul compileFlat(Flat { method, path, plugs, handler: base }) = Route {
     method: method,
     path: path,
     handler: do |request, context|

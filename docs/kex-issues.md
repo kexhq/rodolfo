@@ -15,6 +15,53 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-17, against `kex 0.4.0-beta.3 (3ee1b81)`
+
+`../kex` moved from `293a0b5` to `main`'s tip (`3ee1b81`), pulling in `304b92f`
+("Fix curried typing info", kexhq/kex#350), `986d28e`/`90120f3`/`cc5c195`
+(already covered below as #20/#22), and `a4f7330` (merged as `kexhq/kex#365`,
+"Fix websocket close issues, add specs", closing kexhq/kex#360 — see #23).
+Built locally with `make build` and re-run the same way as prior entries: a
+standalone repro per item, then the full `spec/rodolfo.spec.kex` (45 examples)
+and `examples/library`'s five spec files (67 examples) through `--source-root`
+against the BEAM backend, plus a `kex -R` smoke test where relevant.
+
+**#18 is fixed** — re-verified with the exact `Definition`/`Flat` repro from
+its own entry, both field-declaration orders, and reading back every field on
+both records (not just the one that happened to work before). All correct on
+this build; no bisection was run to name the exact fixing commit, since
+rebuilding at each candidate commit is expensive and nothing in the visible
+commit range names #18 or kexhq/kex#348 directly. `src/rodolfo.kex` dropped
+the tuple workaround: `Flat` is a real record again (`method`, `path`,
+`plugs`, `handler`), `flattened` returns `[Flat]`, and `compileFlat` pattern-
+matches it directly. Full spec suite (45 + 67 examples) passes unchanged.
+
+**#23 is fixed**, closing kexhq/kex#360 — see its own entry below.
+
+**#21 still reproduces**, in a third shape. Re-ran the exact `plug(~poweredBy)`
+case this entry's "partially retracted" note left open, plus a from-scratch
+minimal repro with no Rodolfo involved at all
+(`mk : (Integer -> Integer) -> (Integer -> Integer)`, called both bare and via
+`~`). Both now fail before ever reaching the "wrong reconstructed type" error
+this entry originally reported: `kex -C` emits a **warning** that the
+annotation "declares 2 parameter(s) but definition has 1" — the arity check
+that produces this warning flattens the parenthesized `(A -> B) -> (C -> D)`
+into a naive arrow count instead of respecting the grouping — and then a real
+type error follows from the same miscount (`` `mk` declared to return Integer
+but body returns T0 -> Integer ``). `304b92f` fixed the two paths it targeted
+(printing a curried result type, and typing a bare function reference used as
+a value) but not this one: the arity-declaration check is evidently a third,
+separate code path over the same signature shape. Net effect for Rodolfo is
+unchanged — a plug still has to be written as a closure literal
+(`let name = do |inner| do |env| ... end end`), never as a named function
+passed by name or by `~`. Nothing in `src/rodolfo.kex` changed for this entry.
+
+**#1/#2 (serving) and #17 (multi-clause abstract-union dispatch) are
+unchanged** — re-run against their own standalone repros, still reproduce
+exactly as described, and no commit in `293a0b5..3ee1b81` touches `serving`,
+process export, or multi-clause lowering. No workaround in `src/rodolfo.kex`
+or `examples/library` changed for either.
+
 ## Re-verified 2026-09-15, against `kex 0.4.0-beta.3 (293a0b5)`
 
 `../kex` moved well past `9ecd0f6` — built locally as `/home/akos/kex/kex/build/kex`.
@@ -683,6 +730,10 @@ tends to happen.
 
 ### 18. Two records in one module sharing a field name corrupts the other's accessor at runtime
 
+**Fixed** — re-verified 2026-09-17 against `kex 0.4.0-beta.3 (3ee1b81)`; see
+the dated entry above for the exact re-test and what changed in
+`src/rodolfo.kex`. kexhq/kex#348 can be closed.
+
 Filed upstream as kexhq/kex#348.
 
 Found on `293a0b5` while adding `Rodolfo.Router`'s scope-flattening step
@@ -757,6 +808,13 @@ explicit parens because that's simply what a call without a trailing block
 requires, not to route around a defect.
 
 ### 21. A named function passed as a value loses its type — or its body — when the function returns another function
+
+**Still reproduces**, in a third shape — re-verified 2026-09-17 against `kex
+0.4.0-beta.3 (3ee1b81)`; see the dated entry above. `304b92f` ("Fix curried
+typing info") fixed curried-result-type printing and bare-reference typing
+but not the arity-declaration check, which still misreads a parenthesized
+`(A -> B) -> (C -> D)` signature. Workaround unchanged: a plug stays a
+closure literal, never a named function passed by name or by `~`.
 
 Filed upstream as kexhq/kex#350. **Partially retracted** — the primary
 repro below (`addPair`/`check`) was never a real bug: `addPair`'s honest
@@ -879,6 +937,16 @@ Workaround: none. Every block argument needs an explicit binding for every
 parameter position the function type declares, used or not.
 
 ### 23. `Net.Socket` + `Net.HTTP.WebSocket` crash `erlc` — blocks WebSocket routes on a real server
+
+**Fixed** on `a4f7330` (merged via kexhq/kex#365), closing kexhq/kex#360.
+Re-verified 2026-09-17 by running kex's own new regression specs
+(`spec/net_socket_websocket_close_collision_beam.kex` and
+`spec/net_socket_websocket_minimal_beam.kex`) — both pass, including the
+real `close`/`closed?` calls on each colliding type. #20 being fixed plus
+this now unblocks Rodolfo route-level WebSocket support (`ws "/path" do
+|socket| ... end`, mirroring `get`/`post`); it has not been built yet — that
+is new feature work, not a workaround to remove, so nothing in
+`src/rodolfo.kex` changed for this entry.
 
 Filed upstream as kexhq/kex#360.
 
