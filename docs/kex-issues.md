@@ -296,6 +296,47 @@ This still blocks the shape #1 blocked, so `examples/library` keeps its
 catalogue in a tab-separated file (`src/shelf.kex`) rather than a process: a
 store in its own module is exactly the failing cell.
 
+### 24. A server-side WebSocket `Connection` can't be sent to from another process while it's idle
+
+Filed upstream as kexhq/kex#370.
+
+Found on `3ee1b81` (2026-09-18) while building Rodolfo's own `ws` route
+support on top of #23's fix — trying to write a broadcast chat room example:
+a `serving Room` holding every connected `Connection` and pushing to all of
+them whenever any one client sends a message.
+
+A `Connection`, `.send()`-to from a process other than the one running its
+own handler, hangs for ~30s and then reports the connection closed — even
+though the client is still connected and simply hasn't sent anything since
+upgrading. `runtime/src/kex_intrinsic_netwebsocket.erl`'s `server_loop`
+processes a `receive_message` request with a **blocking** `gen_tcp:recv`
+(the module's 30000ms `?TIMEOUT`), during which it cannot service any other
+message in its mailbox — including a `{send, ...}` request queued by another
+process. If the client stays quiet past that window, the recv times out,
+`server_loop` marks itself closed (any transport hiccup, timeout or genuine
+close, is reported with `kind: Closed`), and only then drains its mailbox to
+answer the queued send — with an error, since it now considers itself dead.
+Confirmed with a minimal, Rodolfo-free repro: registering a connection with
+a separate `serving` process and pushing to it from a plain HTTP route takes
+~32.5 wall-clock seconds to fail, matching the internal timeout exactly.
+
+Same-connection request/reply — the handler calling `send`/`receiveMessage`
+on its own connection, including from a per-session `serving` actor it
+spawned itself (see kex's own `examples/websocket_chat.kex`) — is unaffected,
+since that process is never the one stuck in the blocking recv when the send
+happens. It is specifically a *different* process sending to an *idle*
+connection that hits this.
+
+Workaround: none found. This blocks the shape #1/#2 blocked, one level up —
+a single connection's own request/reply loop works fine, but Rodolfo's `ws`
+route can't be used to build anything that pushes to a connection from
+outside its own handler (a broadcast chat room, a shared notification
+channel, pub/sub) reliably, since the target is normally idle exactly when a
+push would matter. An `examples/chat` broadcast demo was built, confirmed
+broken by this, and reverted rather than shipped; `ws`'s own single-connection
+request/reply shape (the "Rodolfo serves WebSocket routes" specs) is
+unaffected and stays in `src/rodolfo.kex`.
+
 ### 3. `tey install` refuses the toolchain it needs
 
 **Fixed** on `5a088fe` (Tey side, built from `../kex`'s `make build-tey`).
