@@ -166,7 +166,9 @@ shipped matching the `net-plan.md` sketch quoted below almost exactly —
 confirmed by running kex's own `examples/websocket_chat.kex` against a
 clean, isolated build of `main`: a real `serving`-backed chat session
 answers over an actual upgraded connection, no mocks. Rodolfo route-level
-support (`ws "/path" do |socket| ... end`) is unblocked; not yet built.
+support (`ws "/path" do |socket| ... end`) is unblocked and, as of
+2026-09-18 and #23's fix, built — see `ws` in `src/rodolfo.kex` and the
+"WebSocket routes" section of `README.md`.
 
 Found on `293a0b5` while scoping WebSocket route support for Rodolfo (the
 kind of thing Sinatra and Kemal both offer, and Rodolfo already borrows its
@@ -945,11 +947,32 @@ parameter position the function type declares, used or not.
 Re-verified 2026-09-17 by running kex's own new regression specs
 (`spec/net_socket_websocket_close_collision_beam.kex` and
 `spec/net_socket_websocket_minimal_beam.kex`) — both pass, including the
-real `close`/`closed?` calls on each colliding type. #20 being fixed plus
-this now unblocks Rodolfo route-level WebSocket support (`ws "/path" do
-|socket| ... end`, mirroring `get`/`post`); it has not been built yet — that
-is new feature work, not a workaround to remove, so nothing in
-`src/rodolfo.kex` changed for this entry.
+real `close`/`closed?` calls on each colliding type.
+
+2026-09-18: built the `ws "/path" do |socket| ... end` route this and #20
+unblocked — `WsDefinition`, `SocketHandler`, and `ws` in `src/rodolfo.kex`,
+speced in `spec/rodolfo.spec.kex` ("Rodolfo serves WebSocket routes"),
+documented in `README.md`. Two things worth recording from building it:
+
+- `Client.close()` (an existing, working call, unrelated to any of this)
+  gets misreported by `kex -C` as an arity/overload mismatch the moment
+  `Net.HTTP.WebSocket` is anywhere in the compiled program's module graph —
+  merely being compiled in is enough, regardless of which names are
+  `using`-imported from it, or with what `only:`/`except:` list. This is a
+  false positive: `--run` (the real BEAM path) compiles and executes every
+  such call correctly, matching #21's already-established pattern of `-C`
+  and `-r`/`--run` disagreeing over the same program. No workaround needed
+  since nothing is actually broken, but worth knowing `kex -C` on any
+  program using both `Rodolfo` and `Net.HTTP.WebSocket` will show this.
+- `WebSocket.connect` (and, presumably, any function in a module Rodolfo's
+  own code imports but never itself calls) type-checks fine through
+  Rodolfo's re-export but is "Undefined function" at runtime unless the
+  *calling* module also imports `Net.HTTP.WebSocket` itself — the codegen
+  omits an export the entry compilation unit never reaches, the same class
+  of bug as #1/#2 (`serving` slots not exported), just for a plain function.
+  `spec/rodolfo.spec.kex` works around it with its own direct
+  `using Net.HTTP.WebSocket, only: [WebSocket, ...]`, and `README.md`'s
+  example does the same for `Message`'s variants.
 
 Filed upstream as kexhq/kex#360.
 

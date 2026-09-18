@@ -192,6 +192,42 @@ shared scope, so a plug on `router2` never reaches `router1`'s routes:
 let combined = coreRoutes + adminRoutes + healthRoutes
 ```
 
+## WebSocket routes
+
+`ws` declares a route that upgrades on a completed RFC 6455 handshake,
+handing the block a live `Connection` instead of a `Context`/`Reply` pair —
+there's no subprotocol negotiation or handshake rejection here; every
+request that upgrades is accepted:
+
+```rb
+using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
+
+Rodolfo.router do
+  ws "/echo" do |socket|
+    loop do
+      match socket.receiveMessage.try do
+        Text(text) => socket.send(Text(text)).try
+        CloseMessage(_, _) => break
+        _ => Void
+      end
+    end
+  end
+end
+```
+
+`ws` routes take part in path prefixing exactly like any other route — one
+declared inside a `scope "/api" do ... end` answers at `/api/echo` — but not
+in the plug stack: a `Connection -> Void` handler isn't shaped like a
+`Handler`, and an upgraded connection's lifecycle isn't a single
+request/response the way an ordinary route's is.
+
+`Message`, `Text`, `BinaryMessage`, and `CloseMessage` aren't re-exported by
+`using Rodolfo` — `Text` would collide with `Response.Text` — so a `ws`
+handler brings them in itself, as above. Reach for
+`Net.HTTP.WebSocket.upgrade` directly from an ordinary `get` route instead of
+`ws` when a client needs to negotiate a subprotocol or be rejected before the
+101 response goes out.
+
 ## Serving
 
 `start` blocks, which is what a `main` wants; `background` returns a

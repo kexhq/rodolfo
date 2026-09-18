@@ -29,7 +29,12 @@ module Rodolfo
 
 # `Response` below is Rodolfo's own — the reply a route block returns — so
 # Net.HTTP arrives selectively and its response constructors stay qualified.
+# `Message`, `Text`, `BinaryMessage`, and `CloseMessage` stay unimported —
+# `Text` collides with `Response.Text` — so a `ws` handler that pattern
+# matches on messages brings them in itself: `using Net.HTTP.WebSocket, only:
+# [Message, Text, BinaryMessage, CloseMessage]`.
 using Net.HTTP, only: [Request, Context, Headers, Route, Server, ServerOptions]
+using Net.HTTP.WebSocket, only: [WebSocket, Connection, Handshake, Upgrade, Accept, Reject]
 using Net.Socket
 using URI, only: [URI, Form]
 using Rodolfo.Markup
@@ -240,6 +245,17 @@ record Definition do
   handler : Handler
 end
 
+# A WebSocket route block: a live, already-upgraded connection to read from
+# and write to. Everything before the upgrade — the handshake itself, and
+# whether to accept it — is handled for you; see `ws`.
+type SocketHandler = Connection -> Void
+
+# One declaration for a `ws` route in a Rodolfo route list.
+record WsDefinition do
+  path : String
+  handler : SocketHandler
+end
+
 # Wraps a `plug` declaration so it can sit in the same `router do ... end` or
 # `scope do ... end` body as route declarations and nested scopes — see
 # +Entry+.
@@ -256,8 +272,8 @@ record Scope do
 end
 
 # One statement inside a `router do ... end` or `scope do ... end` body: a
-# route, a plug, or a nested scope.
-type Entry = Definition | PlugEntry | Scope
+# route, a WebSocket route, a plug, or a nested scope.
+type Entry = Definition | WsDefinition | PlugEntry | Scope
 
 # A flattened route: a scope tree collapses to one of these per
 # `Definition`, its plug stack accumulated top-down and its path prefixed by
@@ -346,6 +362,35 @@ let head(path, handler) = route("HEAD", path, handler)
 # @return [Entry] the declaration
 options : String -> Handler -> Entry
 let options(path, handler) = route("OPTIONS", path, handler)
+
+# Declares a WebSocket route: any client that completes the RFC 6455
+# handshake at `path` is handed a live `Connection`, ready to `send` and
+# `receiveMessage`. There is no subprotocol negotiation or handshake
+# rejection here — every request that upgrades is accepted; reach for
+# `Net.HTTP.WebSocket.upgrade` directly from an ordinary `get` route when you
+# need that.
+#
+# WebSocket routes don't take part in the plug stack: a `Connection -> Void`
+# handler isn't shaped like a `Handler`, and the upgrade handshake is a
+# different lifecycle from an ordinary request/response. A path inside a
+# `scope`, though, is prefixed exactly like any other route's.
+#
+# @param path [String] the route path, with +:name+ captures
+# @param handler [SocketHandler] runs once per connection, for as long as it stays open
+# @return [Entry] the declaration
+#
+# @example An echo server
+#   ws "/echo" do |socket|
+#     loop do
+#       match socket.receiveMessage.try do
+#         Text(text) => socket.send(Text(text)).try
+#         CloseMessage(_, _) => break
+#         _ => Void
+#       end
+#     end
+#   end
+ws : String -> SocketHandler -> Entry
+let ws(path, handler) = WsDefinition { path: path, handler: handler }
 
 # Adds a plug to the enclosing `router do ... end` or `scope do ... end`
 # body. Applies to every route declared in that body, direct or nested,
@@ -572,7 +617,7 @@ private do
   # foul code makes its enclosing context foul.
   compileRoutes : [Entry] -> Net.HTTP.Router
   foul compileRoutes(entries) = Net.HTTP.Router {
-    routes: flattened(entries, "", []).map(~compileFlat)
+    routes: flattened(entries, "", []).map(~compileFlat) + wsFlattened(entries, "").map(~compileWs)
   }
 
   # Collapses a scope tree into one `Flat` per `Definition`.
@@ -584,9 +629,22 @@ private do
         Definition { method, path, handler } =>
           [Flat { method: method, path: joinedPath(prefix, path), plugs: stack, handler: handler }]
         Scope { prefix: childPrefix, children } => flattened(children, joinedPath(prefix, childPrefix), stack)
+        WsDefinition { path, handler } => []
       end
     }
   end
+
+  # Collapses a scope tree into one `WsDefinition` per `ws` declaration, path
+  # prefixed by every scope it sat inside. No plug stack: WebSocket routes
+  # don't take part in it — see `ws`'s own doc comment.
+  wsFlattened : [Entry] -> String -> [WsDefinition]
+  let wsFlattened(entries, prefix) = routesAndScopesOf(entries).flatMap { |entry|
+    match entry do
+      WsDefinition { path, handler } => [WsDefinition { path: joinedPath(prefix, path), handler: handler }]
+      Scope { prefix: childPrefix, children } => wsFlattened(children, joinedPath(prefix, childPrefix))
+      Definition { method, path, handler } => []
+    end
+  }
 
   plugsOf : [Entry] -> [Plug]
   let plugsOf(entries) = entries.flatMap { |entry|
@@ -624,6 +682,19 @@ private do
         handler(Context { request: request, context: context }),
         "${method} ${path}"
       )
+    end
+  }
+
+  # A `ws` route compiles to a plain GET: the RFC 6455 handshake a WebSocket
+  # client sends is itself an ordinary GET request, and `WebSocket.upgrade`
+  # is the part that recognizes it and answers with a 101 instead of calling
+  # `handler` at all when the request isn't a valid handshake.
+  compileWs : WsDefinition -> Route
+  foul compileWs(WsDefinition { path, handler }) = Route {
+    method: "GET",
+    path: path,
+    handler: do |request, context|
+      WebSocket.upgrade(request, do |handshake| Accept(handler, Headers.empty, None) end)
     end
   }
 
