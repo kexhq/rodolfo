@@ -5,6 +5,8 @@
 using Chat.Protocol
 
 describe("Chat.Protocol.rosterLine") do
+  # Sent once, to a newcomer, as their opening snapshot — every later change
+  # travels as a `$join:` / `$part:` delta instead.
   it("carries the whole roster, comma-separated") do
     assert(Chat.Protocol.rosterLine(["Ada", "Bob"]) == "$users:Ada,Bob")
   end
@@ -19,6 +21,31 @@ describe("Chat.Protocol.rosterLine") do
 
   it("starts with the prefix the page's JS splits on") do
     assert(Chat.Protocol.rosterLine(["Ada"]).startsWith?("$users:"))
+  end
+end
+
+describe("Chat.Protocol.deltaLine") do
+  it("marks an arrival and a departure apart by sign") do
+    assert(Chat.Protocol.arrival("Ada") == "+Ada")
+    assert(Chat.Protocol.departure("Ada") == "-Ada")
+  end
+
+  it("carries a whole window of changes in one line") do
+    assert(Chat.Protocol.deltaLine(["+Ada", "-Bob", "+Cy"]) == "$roster:+Ada,-Bob,+Cy")
+  end
+
+  # This is the shape that keeps churn linear. A `$users:` snapshot is O(n)
+  # bytes, so sending one to all n members on every join moves O(n²) bytes —
+  # megabytes per arrival in a room of a thousand. A batch of deltas is O(1)
+  # per change, sent once per flush window however many changes it holds.
+  it("costs less than resending the roster, and does not grow with the room") do
+    let crowd = ["Ada", "Bob", "Cy", "Dee", "Eve"]
+    assert(Chat.Protocol.deltaLine(["+Ada"]).length < Chat.Protocol.rosterLine(crowd).length)
+  end
+
+  it("cannot be confused with a snapshot, which shares its prefix character") do
+    assert(Chat.Protocol.deltaLine(["+Ada"]).startsWith?("$users:").falsy?)
+    assert(Chat.Protocol.rosterLine(["Ada"]).startsWith?("$roster:").falsy?)
   end
 end
 

@@ -81,9 +81,28 @@ describe("Chat.Views.chat") do
     assert(page.contains?("\\\" + alert(1) + \\\""))
   end
 
-  it("dispatches the three line shapes the room broadcasts") do
+  it("dispatches every line shape the room broadcasts") do
     let page = asText(Chat.Views.chat("Ada", "/chat"))
-    assert(page.contains?("event.data.indexOf(\"$users:\") === 0"))
-    assert(page.contains?("event.data.indexOf(\"* \") === 0"))
+    assert(page.contains?("data.indexOf(\"$users:\") === 0"))
+    assert(page.contains?("data.indexOf(\"$roster:\") === 0"))
+    assert(page.contains?("data.indexOf(\"* \") === 0"))
+  end
+
+  # The client, not the server, is what holds the current roster now — the
+  # server sends one snapshot and then deltas, so the page has to keep the
+  # list to apply them to.
+  it("keeps the roster client-side so a delta has something to apply to") do
+    let page = asText(Chat.Views.chat("Ada", "/chat"))
+    assert(page.contains?("var members = [];"))
+    assert(page.contains?("members.push(who)"))
+    assert(page.contains?("members.splice(at, 1)"))
+  end
+
+  # The room sends no "Ada joined" line at all any more — one fan-out per
+  # window carries the roster change, and the page turns it into prose.
+  it("derives its own joined/left notices from the deltas") do
+    let page = asText(Chat.Views.chat("Ada", "/chat"))
+    assert(page.contains?("appendSystem(who + \" joined\")"))
+    assert(page.contains?("appendSystem(who + \" left\")"))
   end
 end

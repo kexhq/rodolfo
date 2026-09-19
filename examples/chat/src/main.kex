@@ -9,10 +9,10 @@
 # different name in each, and chat between them. The two pages themselves
 # live in `chat/views.kex` — see there for how they're built.
 #
-# `Room` is declared right here in the entrypoint module on purpose — a
-# `serving` process whose slots are called from a route handler only works
-# reliably when the `serving` block sits in the entrypoint, not an imported
-# module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
+# `Room` and `Outbox` are declared right here in the entrypoint module on
+# purpose — a `serving` process whose slots are called from a route handler
+# only works reliably when the `serving` block sits in the entrypoint, not an
+# imported module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
 using Rodolfo
 using Net, only: [NetError, Timeout]
 using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
@@ -26,14 +26,46 @@ using Chat.Protocol
 roomToken : String
 let roomToken = "let-me-in"
 
+# One actor per connection, owning that connection's socket.
+#
+# Nothing else touches the socket, and that is the whole point. `send` is
+# synchronous: it blocks until the peer's kernel buffer takes the bytes.
+# Called straight from the room, one reader who has stopped reading — a
+# phone on a dying train connection — stalls delivery to everyone after them
+# in the list, for up to the runtime's 31-second call timeout. Giving each
+# socket its own actor turns a broadcast into a fan-out of asynchronous
+# sends: a slow peer backs up its own mailbox and nobody else's.
+record Outbox do
+  socket : Connection
+end
+
+serving Outbox do
+  # `-> Void` is what makes this a cast rather than a call, so the room
+  # hands the line over and moves on without waiting for the write.
+  #
+  # A failed send needs nothing done about it here. The runtime closes the
+  # transport itself when a send fails, which wakes the connection's own
+  # handler — it is sitting in `receiveMessage` — with a `Closed` error, and
+  # that runs the same `leave` cleanup a clean disconnect does. One removal
+  # path, not two.
+  slot deliver(line: String) -> Void do
+    @socket.send(Text(line))
+    return new
+  end
+
+  slot shutdown -> Reply<Void> = { stop: :normal, reply: Void }
+end
+
 # Every connection, by name — a name doubles as the room's idea of "who's
 # here", so `join` can refuse a name already in use and the client can be
-# shown a live roster, not just a scrolling log. `broadcast` doubles as the
-# only place a dead connection gets noticed: a socket whose `send` fails —
-# the peer closed without a clean handshake, most likely — is dropped from
-# the room rather than tracked down by a separate message.
+# shown a live roster, not just a scrolling log.
 record Room do
-  users : [(String, Connection)] = []
+  users : [(String, Server<Outbox>)] = []
+  # Roster changes since the last flush, newest first. Nobody is told about
+  # an arrival the moment it happens; the ticker in `main` empties this a few
+  # times a second, so a burst of joins costs one fan-out instead of one per
+  # person.
+  pending : [String] = []
 end
 
 serving Room do
@@ -47,31 +79,61 @@ serving Room do
   end
 
   # `None` means the name is already taken and nothing changed; `Just`
-  # carries the roster (every name, this one included) to announce.
-  slot join(name: String, socket: Connection) -> Reply<[String]?> do
+  # carries the roster — every name, this one included — for the newcomer's
+  # opening snapshot.
+  slot join(name: String, outbox: Server<Outbox>) -> Reply<[String]?> do
     let taken = @users.any? { |user| match user do (existing, _) => existing == name end }
     if taken
       return { reply: None }
     else
-      new.users = [(name, socket) | @users]
+      new.users = [(name, outbox) | @users]
+      new.pending = [Chat.Protocol.arrival(name) | @pending]
       return { new, reply: Just(new.users.map { |user| match user do (existing, _) => existing end }) }
     end
   end
 
-  # The roster after removal, to announce the same way `join` does.
-  slot leave(name: String) -> Reply<[String]> do
+  slot leave(name: String) -> Void do
     new.users = @users.filter { |user| match user do (existing, _) => existing != name end }
-    return { new, reply: new.users.map { |user| match user do (existing, _) => existing end } }
-  end
-
-  slot broadcast(text: String) -> Void do
-    new.users = @users.filter { |user| match user do (_, socket) => socket.send(Text(text)).ok? end }
+    new.pending = [Chat.Protocol.departure(name) | @pending]
     return new
   end
+
+  # Called on a timer, not on a join: every roster change since the last tick
+  # goes out as one line to each member. An idle room flushes nothing.
+  slot flush -> Void do
+    if @pending.empty?
+      return new
+    else
+      let line = Chat.Protocol.deltaLine(@pending.reverse)
+      @users.each { |user| match user do (_, outbox) => outbox.deliver(line) end }
+      new.pending = []
+      return new
+    end
+  end
+
+  # A cast: the room hands the line to every outbox and is immediately free
+  # for the next one. No socket is touched here, so nothing in this slot can
+  # block on a network peer.
+  slot broadcast(line: String) -> Void do
+    @users.each { |user| match user do (_, outbox) => outbox.deliver(line) end }
+    return new
+  end
+
 end
 
 main do
   let room = Process.spawn(Room {})
+
+  # The room's clock. There is no `sendAfter` in the runtime, so the tick is
+  # a plain task that sleeps and casts — which is all a timer would have
+  # been. Ten flushes a second is fast enough that a roster feels live and
+  # slow enough that a rush of arrivals collapses into one message.
+  Task.start do
+    loop do
+      Task.sleep(Duration.milliseconds(100))
+      room.flush()
+    end
+  end
 
   let site = Rodolfo.router do
     get "/" do |env|
@@ -108,12 +170,23 @@ main do
       let token = env.query("token").or("")
       let name = env.query("name").or("").trim
       if token != roomToken || name.empty?
-        socket.close
+        # Returning from a `ws` handler is itself how a connection is hung
+        # up: the runtime sends the close frame and releases the transport
+        # when the handler finishes. (An explicit `socket.close` says the
+        # same thing, but only compiles where the compiler does not know the
+        # parameter's type — once `Outbox` pins it to `Connection`, that
+        # zero-argument method stops resolving. See docs/kex-issues.md #29.)
+        Void
       else
-        match room.join(name, socket).try do
+        let outbox = Process.spawn(Outbox { socket: socket })
+        match room.join(name, outbox).try do
           Just(roster) => do
-            room.broadcast(Chat.Protocol.systemLine("${name} joined"))
-            room.broadcast(Chat.Protocol.rosterLine(roster))
+            # The newcomer gets the roster in full, once, straight down
+            # their own socket. Everyone else learns about them on the next
+            # flush, batched with whoever else arrived in the same window —
+            # that asymmetry is the whole of the roster's cost model, and the
+            # reason a join costs O(1) bytes per member instead of O(n).
+            outbox.deliver(Chat.Protocol.rosterLine(roster))
             # `receiveMessage` is matched as the `Result` it is, rather than
             # `.try`-ed, because the two ways it fails need opposite answers.
             #
@@ -127,11 +200,8 @@ main do
             #
             # Every other error is a real disconnect. An abrupt one — a
             # dropped network, a closed laptop lid — fails the receive rather
-            # than ever handing back a `CloseMessage`, and leaving the loop on
-            # it runs the same cleanup a clean close does. Skipping that
-            # cleanup would leave a phantom entry in `Room` forever: the name
-            # stays "taken" until some later `broadcast` happens to try this
-            # dead socket and prune it.
+            # than ever handing back a `CloseMessage`, and leaving the loop
+            # on it runs the same cleanup a clean close does.
             loop do
               match socket.receiveMessage do
                 Ok(Text(text)) => room.broadcast(Chat.Protocol.chatLine(name, text))
@@ -141,13 +211,14 @@ main do
                 Error(_) => break
               end
             end
-            let remaining = room.leave(name).try
-            room.broadcast(Chat.Protocol.systemLine("${name} left"))
-            room.broadcast(Chat.Protocol.rosterLine(remaining))
+            room.leave(name)
+            outbox.shutdown()
+            Void
           end
           None => do
             socket.send(Text(Chat.Protocol.systemLine("\"${name}\" is already in this room — try another name."))).try
-            socket.close
+            outbox.shutdown()
+            Void
           end
         end
       end

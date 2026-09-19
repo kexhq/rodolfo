@@ -12,7 +12,13 @@
 # a bare top-level module name collides — see docs/kex-issues.md #26.
 module Chat.Protocol
 
-# Who is in the room now — the whole roster every time, not a diff.
+# Who is in the room now — the opening snapshot, sent once to a newcomer.
+#
+# Every later change travels as a delta ([[joinLine]] / [[partLine]]) rather
+# than another copy of this. The difference is not cosmetic: a roster line is
+# O(n) bytes, so sending it to all n members on every join moves O(n²) bytes
+# per join — at a thousand members, several megabytes each time somebody
+# arrives. One snapshot per newcomer, deltas thereafter, is linear.
 #
 # @param names [[String]] every name currently joined
 # @return [String] the `$users:` line to broadcast
@@ -31,6 +37,32 @@ let rosterLine(names) = "$users:${names.join(",")}"
 #   Chat.Protocol.systemLine("Ada joined")   # => "* Ada joined"
 systemLine : String -> String
 let systemLine(text) = "* ${text}"
+
+# How one name changed: `+Ada` arrived, `-Ada` left.
+#
+# These are what a [[deltaLine]] is made of, and they are what the client
+# derives its own "Ada joined" notices from — the room does not send those
+# separately, because a second line per arrival is a second fan-out.
+arrival : String -> String
+let arrival(name) = "+${name}"
+
+departure : String -> String
+let departure(name) = "-${name}"
+
+# Every roster change since the last flush, in one line.
+#
+# The room batches: a burst of arrivals in the same window costs one message
+# to each member rather than one per arrival. That is the difference between
+# a link being shared in a group chat and the room falling over — fifty
+# people joining at once is fifty fan-outs otherwise.
+#
+# @param changes [[String]] `+name` / `-name` entries, oldest first
+# @return [String] the `$roster:` line to broadcast
+#
+# @example
+#   Chat.Protocol.deltaLine(["+Ada", "-Bob"])   # => "$roster:+Ada,-Bob"
+deltaLine : [String] -> String
+let deltaLine(changes) = "$roster:${changes.join(",")}"
 
 # Something a person said, attributed to them.
 #

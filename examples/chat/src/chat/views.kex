@@ -151,14 +151,17 @@ let chat(name, socketPath) do
           log.scrollTop = log.scrollHeight;
         }
 
-        // The roster arrives as one message per change, not incrementally —
-        // "$users:Alice,Bob" is the whole current list, so redrawing from
-        // scratch every time is simpler than reconciling a diff and cheap
-        // enough for a room this size.
-        function updateRoster(namesCsv) {
-          var names = namesCsv === "" ? [] : namesCsv.split(",");
+        // The roster arrives once in full, on joining, and as one-name
+        // deltas after that — the server has no reason to resend a list of
+        // everybody every time one person arrives, and at a few hundred
+        // members that resend is the most expensive thing it does. The
+        // client is the one holding the current list, so it redraws from
+        // its own members array after applying whatever came in.
+        var members = [];
+
+        function drawRoster() {
           roster.innerHTML = "";
-          names.forEach(function (personName) {
+          members.forEach(function (personName) {
             var item = document.createElement("li");
             item.textContent = personName;
             if (personName === myName) {
@@ -169,13 +172,37 @@ let chat(name, socketPath) do
           });
         }
 
+        // A batch of roster changes: "+Ada,-Bob". The "Ada joined" notices
+        // are derived here rather than sent, since a second line per arrival
+        // would be a second fan-out for the room to pay for.
+        function applyDeltas(csv) {
+          csv.split(",").forEach(function (change) {
+            var who = change.slice(1);
+            if (who === "") { return; }
+            var at = members.indexOf(who);
+            if (change.charAt(0) === "+") {
+              if (at === -1) { members.push(who); }
+              if (who !== myName) { appendSystem(who + " joined"); }
+            } else {
+              if (at !== -1) { members.splice(at, 1); }
+              appendSystem(who + " left");
+            }
+          });
+          drawRoster();
+        }
+
         socket.onmessage = function (event) {
-          if (event.data.indexOf("$users:") === 0) {
-            updateRoster(event.data.slice(7));
-          } else if (event.data.indexOf("* ") === 0) {
-            appendSystem(event.data.slice(2));
+          var data = event.data;
+          if (data.indexOf("$users:") === 0) {
+            var csv = data.slice(7);
+            members = csv === "" ? [] : csv.split(",");
+            drawRoster();
+          } else if (data.indexOf("$roster:") === 0) {
+            applyDeltas(data.slice(8));
+          } else if (data.indexOf("* ") === 0) {
+            appendSystem(data.slice(2));
           } else {
-            appendMessage(event.data);
+            appendMessage(data);
           }
         };
         socket.onclose = function () { appendSystem("disconnected"); };
