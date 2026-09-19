@@ -263,6 +263,9 @@ is blocked on this landing in Kex first.
 
 ### 1. `serving` slots are not exported once the program depends on `Net.HTTP`
 
+Filed upstream as kexhq/kex#376 (closed on file — already fixed, kept for
+the historical record and as somewhere to reopen from if it regresses).
+
 **Fixed** on `331cbb5`. The exact repro the `5a088fe` note describes — a bare
 `serving Counter do ... end` in the entrypoint, `using Net.HTTP, only:
 [Headers]`, and one `foul` function taking a `Server<Counter>` — now runs
@@ -297,6 +300,8 @@ Kex-level workaround, so `examples/library` keeps its catalogue in a
 tab-separated file (`src/shelf.kex`) instead of in a process.
 
 ### 2. `serving` declared in an imported module never resolves
+
+Filed upstream as kexhq/kex#377.
 
 **Still reproduces** on `main` (`b913dac`, 2026-09-19) for Rodolfo's actual
 shape — `using Rodolfo` in the entrypoint, a `serving` block in a plain
