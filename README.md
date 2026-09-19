@@ -302,12 +302,20 @@ application would:
   token-gated admin route, using `plug` and `scope`
 - `examples/library` — a book-management CRUD interface: list, search, add,
   edit, delete, lend, and return, in plain HTML forms
+- `examples/chat` — a broadcast WebSocket chat room with a shared room
+  password and a display name per connection, using `ws` and `Plug.around`
 
 ![The library example's catalogue page](examples/library/screenshot.png)
 
 The catalogue above is what `examples/library` serves on the first run: the
 opening books from `mock_data.kex`, escaped through `html$`, with the search
 box, the status pills, and the row actions the rest of the example implements.
+
+![The chat example's room](examples/chat/screenshot.png)
+
+Two browser tabs chatting with each other above — `examples/chat` serves the
+login form and the room itself from `chat/views.kex`, and broadcasts each
+message to every connection currently joined.
 
 The examples are workspace members, so they resolve Rodolfo from this checkout
 rather than from a published tag — one `tey install` at the root covers them:
