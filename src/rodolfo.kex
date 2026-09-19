@@ -245,10 +245,12 @@ record Definition do
   handler : Handler
 end
 
-# A WebSocket route block: a live, already-upgraded connection to read from
-# and write to. Everything before the upgrade — the handshake itself, and
+# A WebSocket route block: the request environment the handshake arrived
+# with (query string, headers, cookies — the same `Context` an ordinary
+# route gets), and a live, already-upgraded connection to read from and
+# write to. Everything before the upgrade — the handshake itself, and
 # whether to accept it — is handled for you; see `ws`.
-type SocketHandler = Connection -> Void
+type SocketHandler = Context -> Connection -> Void
 
 # One declaration for a `ws` route in a Rodolfo route list.
 record WsDefinition do
@@ -396,9 +398,9 @@ let options(path, block) = route("OPTIONS", path, block)
 # `Net.HTTP.WebSocket.upgrade` directly from an ordinary `get` route when you
 # need that.
 #
-# WebSocket routes don't take part in the plug stack: a `Connection -> Void`
-# handler isn't shaped like a `Handler`, and the upgrade handshake is a
-# different lifecycle from an ordinary request/response. A path inside a
+# WebSocket routes don't take part in the plug stack: a `Context -> Connection
+# -> Void` handler isn't shaped like a `Handler`, and the upgrade handshake is
+# a different lifecycle from an ordinary request/response. A path inside a
 # `scope`, though, is prefixed exactly like any other route's.
 #
 # @param path [String] the route path, with +:name+ captures
@@ -406,13 +408,23 @@ let options(path, block) = route("OPTIONS", path, block)
 # @return [Entry] the declaration
 #
 # @example An echo server
-#   ws "/echo" do |socket|
+#   ws "/echo" do |env, socket|
 #     loop do
 #       match socket.receiveMessage.try do
 #         Text(text) => socket.send(Text(text)).try
 #         CloseMessage(_, _) => break
 #         _ => Void
 #       end
+#     end
+#   end
+#
+# @example Rejecting a connection after the fact, since the handshake itself
+#   always accepts — read the token, then close before doing anything else
+#   ws "/chat" do |env, socket|
+#     if env.query("token") == Just("let-me-in")
+#       loop do ... end
+#     else
+#       socket.close
 #     end
 #   end
 ws : String -> SocketHandler -> Entry
@@ -745,7 +757,8 @@ private do
     method: "GET",
     path: path,
     handler: do |request, context|
-      WebSocket.upgrade(request, do |handshake| Accept(handler, Headers.empty, None) end)
+      let env = Context { request: request, context: context }
+      WebSocket.upgrade(request, do |handshake| Accept(do |socket| handler(env, socket) end, Headers.empty, None) end)
     end
   }
 

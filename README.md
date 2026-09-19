@@ -212,15 +212,18 @@ let combined = coreRoutes + adminRoutes + healthRoutes
 ## WebSocket routes
 
 `ws` declares a route that upgrades on a completed RFC 6455 handshake,
-handing the block a live `Connection` instead of a `Context`/`Reply` pair —
-there's no subprotocol negotiation or handshake rejection here; every
-request that upgrades is accepted:
+handing the block the request environment (the same `Context` an ordinary
+route gets — query string, headers, cookies) and a live `Connection` —
+there's no subprotocol negotiation or handshake rejection at the handshake
+itself; every request that upgrades is accepted, so reading `env` and
+closing the connection right away is how a `ws` route rejects one after the
+fact:
 
 ```rb
 using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
 
 Rodolfo.router do
-  ws "/echo" do |socket|
+  ws "/echo" do |env, socket|
     loop do
       match socket.receiveMessage.try do
         Text(text) => socket.send(Text(text)).try
@@ -234,8 +237,8 @@ end
 
 `ws` routes take part in path prefixing exactly like any other route — one
 declared inside a `scope "/api" do ... end` answers at `/api/echo` — but not
-in the plug stack: a `Connection -> Void` handler isn't shaped like a
-`Handler`, and an upgraded connection's lifecycle isn't a single
+in the plug stack: a `Context -> Connection -> Void` handler isn't shaped
+like a `Handler`, and an upgraded connection's lifecycle isn't a single
 request/response the way an ordinary route's is.
 
 `Message`, `Text`, `BinaryMessage`, and `CloseMessage` aren't re-exported by
@@ -249,7 +252,9 @@ Handing the `Connection` to another process (a shared room, a pub/sub
 registry) to push to it from outside its own handler now works too —
 `kexhq/kex#370` (a server-side connection couldn't be sent to while idle,
 which is the normal state of a listener that isn't currently typing) is
-fixed. See `examples/chat` for a broadcast room built on exactly that.
+fixed. See `examples/chat` for a broadcast room built on exactly that, with
+a real browser UI, a display name per connection, and a shared room
+password checked from `env.query(...)` inside the `ws` handler.
 
 ## Serving
 

@@ -702,7 +702,7 @@ end
 describe("Rodolfo serves WebSocket routes") do
   it("upgrades a client that completes the handshake, echoing messages") do
     let api = Rodolfo.router do
-      ws "/echo" do |socket|
+      ws "/echo" do |_, socket|
         match socket.receiveMessage.try do
           Text(text) => socket.send(Text(text)).try
           _ => Void
@@ -725,7 +725,7 @@ describe("Rodolfo serves WebSocket routes") do
   it("prefixes a ws route's path when declared inside a scope") do
     let api = Rodolfo.router do
       scope "/api" do
-        ws "/echo" do |socket|
+        ws "/echo" do |_, socket|
           match socket.receiveMessage.try do
             Text(text) => socket.send(Text(text)).try
             _ => Void
@@ -749,7 +749,7 @@ describe("Rodolfo serves WebSocket routes") do
   it("leaves an ordinary route working alongside a ws route") do
     let api = Rodolfo.router do
       get "/" do |_| "home" end
-      ws "/echo" do |socket|
+      ws "/echo" do |_, socket|
         match socket.receiveMessage.try do
           Text(text) => socket.send(Text(text)).try
           _ => Void

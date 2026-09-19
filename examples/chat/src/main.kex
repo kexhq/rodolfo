@@ -1,13 +1,30 @@
-# A broadcast chat room over a single `ws` route: every connected client
-# gets every message anyone sends. Run this, then connect two or more
-# WebSocket clients to ws://localhost:3000/chat and type from either one.
+# A broadcast chat room over a single `ws` route, with a shared room
+# password and a per-connection display name — both passed as query
+# parameters on the WebSocket URL, since a handshake can't carry anything
+# else and Rodolfo's `ws` always accepts the upgrade itself; closing right
+# away is how a `ws` route rejects a connection after the fact.
+#
+# Run this, then open http://localhost:3000/ in two or more browser tabs (or
+# two different browsers) — enter "let-me-in" as the room password and a
+# different name in each, and chat between them. The two pages themselves
+# live in `views.kex` and `views/*.html.ket` — see there for how they're
+# built.
 #
 # `Room` is declared right here in the entrypoint module on purpose — a
 # `serving` process whose slots are called from a route handler only works
 # reliably when the `serving` block sits in the entrypoint, not an imported
 # module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
 using Rodolfo
+using URI, only: [Form]
 using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
+using Views
+
+# Deliberately simple: one shared password for the whole room, checked
+# against a query parameter on both the login page and the WebSocket URL
+# itself. Real auth would exchange this for a signed session; this is only
+# meant to show `ws` reading the request it was upgraded from.
+roomToken : String
+let roomToken = "let-me-in"
 
 # The connected sockets. `broadcast` doubles as the only place a dead
 # connection gets noticed: a socket whose `send` fails — the peer closed
@@ -33,22 +50,38 @@ main do
   let room = Process.spawn(Room {})
 
   let site = Rodolfo.router do
-    get "/" do
-      "Connect a WebSocket client to ws://localhost:3000/chat"
+    get "/" do |env|
+      let token = env.query("token").or("")
+      let name = env.query("name").or("").trim
+      let attempted = !token.empty? || !name.empty?
+      if !token.empty? && token == roomToken && !name.empty?
+        let query = Form.from([("token", roomToken), ("name", name)]).encode
+        Response.HTML { body: "${Views.chat(name, "/chat?${query}")}" }
+      else
+        Response.HTML { body: "${Views.login(attempted then "Wrong password, or a name is needed." else "")}" }
+      end
     end
 
-    ws "/chat" do |socket|
-      room.join(socket)
-      loop do
-        match socket.receiveMessage.try do
-          Text(text) => room.broadcast(text)
-          CloseMessage(_, _) => break
-          _ => Void
+    ws "/chat" do |env, socket|
+      let token = env.query("token").or("")
+      let name = env.query("name").or("").trim
+      if token != roomToken || name.empty?
+        socket.close
+      else
+        room.join(socket)
+        room.broadcast("* ${name} joined")
+        loop do
+          match socket.receiveMessage.try do
+            Text(text) => room.broadcast("${name}: ${text}")
+            CloseMessage(_, _) => break
+            _ => Void
+          end
         end
+        room.broadcast("* ${name} left")
       end
     end
   end
 
-  IO.printLine("Chat room on ws://localhost:3000/chat")
+  IO.printLine("Chat room on http://localhost:3000/ (room password: ${roomToken})")
   site.start(3000).try
 end

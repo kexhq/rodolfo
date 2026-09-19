@@ -363,6 +363,19 @@ entries for the DSL support this depends on. Nothing in `src/rodolfo.kex`
 needed migrating for this fix itself (there was no workaround, only the
 reverted example); a real `examples/chat` is now buildable.
 
+2026-09-19, second pass: the first `examples/chat` only proved the fix — a
+plain-text prompt, no real interface. `ws`'s own signature grew a `Context`
+parameter (`type SocketHandler = Connection -> Void` became `Context ->
+Connection -> Void`) so a handler can read the query string the handshake
+request carried, which a `ws` route needs for anything beyond an anonymous
+echo: a display name, a room token, anything `WebSocket.upgrade`'s own
+`decide` callback would see if Rodolfo called it directly. `examples/chat`
+now serves a real HTML/JS chat page, a shared room password checked from
+`env.query("token")`, and a distinct display name per connection — verified
+with a live server and real WebSocket clients: a wrong password gets the
+connection closed immediately, and two correctly-authenticated connections
+see each other's joins and messages, correctly attributed by name.
+
 Filed upstream as kexhq/kex#370.
 
 Found on `3ee1b81` (2026-09-18) while building Rodolfo's own `ws` route
@@ -401,6 +414,40 @@ push would matter. An `examples/chat` broadcast demo was built, confirmed
 broken by this, and reverted rather than shipped; `ws`'s own single-connection
 request/reply shape (the "Rodolfo serves WebSocket routes" specs) is
 unaffected and stays in `src/rodolfo.kex`.
+
+### 25. `Template.scan` is severely super-linear — a `.ket` template of ordinary page size times out
+
+Filed upstream as kexhq/kex#379.
+
+Found 2026-09-19 while separating `examples/chat`'s two pages (a login form
+and the chat UI, both with ordinary CSS/JS, a few KB each) into `.ket`
+templates (`Kex.embed` + `Template.html`, kexhq/kex#171) as requested,
+instead of writing them as Rodolfo `html$` literals inline.
+
+`Template.scan` runs interpreted at compile time (`scanTemplateSource`'s own
+comment: "via the same sandboxed Evaluator"), against a hardcoded 2000ms
+budget. Three data points, `kex -C` wall clock, `main` @ `b913dac`:
+
+| Content | Size | Result |
+| --- | --- | --- |
+| A single character | 1 byte | compiles, **1.5s** |
+| A handful of ordinary CSS rules, no tags | ~220 bytes | compiles, **~2.0s** — right at the edge |
+| A real login page: doctype, head, `<style>` (~50 lines of CSS), a form | ~2KB | **times out** |
+
+The 1-byte case rules out "just split it into smaller files": there's a
+large *fixed* cost per `Kex.embed`/`Template.html`/`Template.text` call
+(consistent with spinning up a fresh sandboxed interpreter + prelude each
+time), so decomposing one large template into several smaller ones makes
+total compile time *worse* (N × ~1.5–2s), not better — and any individual
+piece with a modest amount of real content still risks tipping past 2000ms
+on its own, as the 220-byte data point shows.
+
+Workaround: `examples/chat`'s two pages are Rodolfo `html$`/`rawHTML$`
+tagged literals in `views.kex` instead — same visual result, same escaping
+guarantees, compiles instantly since it never goes through the interpreted
+scanner. Worth retrying `.ket` once kexhq/kex#379 is fixed; the views are
+already isolated in their own file, so switching back later is a
+contained change.
 
 ### 3. `tey install` refuses the toolchain it needs
 
