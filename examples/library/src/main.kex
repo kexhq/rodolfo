@@ -71,7 +71,7 @@ main do
   # Declaration order decides matches, so `/books/new` is declared before
   # `/books/:id` — otherwise "new" would be read as an id.
   let library = Rodolfo.router do
-    get "/" do |_|
+    get "/" do
       redirectTo("/books")
     end
 
@@ -80,7 +80,7 @@ main do
       Views.index(Shelf.matching(term), term, notice(env))
     end
 
-    get "/books/new" do |_|
+    get "/books/new" do
       Views.form("Add a book", "/books", Draft {}, [])
     end
 

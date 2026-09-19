@@ -57,14 +57,14 @@ main do
     plug(logged)
     plug(poweredBy)
 
-    get "/" do |_|
+    get "/" do
       Response.Text { body: "Open /admin/stats?token=let-me-in" }
     end
 
     scope "/admin" do
       plug(requireToken("let-me-in"))
 
-      get "/stats" do |_|
+      get "/stats" do
         Response.Text { body: "42 requests served" }
       end
     end

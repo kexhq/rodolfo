@@ -33,7 +33,7 @@ main do
   let room = Process.spawn(Room {})
 
   let site = Rodolfo.router do
-    get "/" do |_|
+    get "/" do
       "Connect a WebSocket client to ws://localhost:3000/chat"
     end
 

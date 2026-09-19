@@ -8,7 +8,7 @@
 #
 #   main do
 #     let site = Rodolfo.router do
-#       get "/" do |_|
+#       get "/" do
 #        "Hello from Kex!"
 #       end
 #
@@ -98,7 +98,7 @@ type Redirection = SeeOther | MovedPermanently | Found | Temporary | Permanent
 # @return Response<Binary> the redirect response
 #
 # @example
-#   get "/old" do |_|
+#   get "/old" do
 #     redirectTo("/new")   # redirect to /new, must be always returned from the route block
 #   end
 redirectTo : String -> Reply
@@ -112,7 +112,7 @@ let redirectTo(location) = redirectTo(location, SeeOther)
 # @return Response<Binary> the redirect response
 #
 # @example
-#   get "/old" do |_|
+#   get "/old" do
 #     redirectTo("/new", MovedPermanently)   # redirect to /new, must be always returned from the route block
 #   end
 redirectTo : String -> Redirection -> Reply
@@ -190,7 +190,7 @@ end
 # +Safe+ is here because markup is a reply in its own right: returning an
 # ``html$`...` `` literal from a route sends it as a 200 text/html page. A
 # plain +String+ becomes a 200 text/plain body, which is what makes
-# +do |_| "hello" end+ a complete route.
+# +do "hello" end+ a complete route.
 type Reply = String
   | Rodolfo.Markup.Safe
   | Rodolfo.Response.JSON
@@ -296,7 +296,7 @@ end
 # @return [Entry] the declaration
 #
 # @example
-#   route "PROPFIND", "/files" do |_| Response.Empty {} end
+#   route "PROPFIND", "/files" do Response.Empty {} end
 route : String -> String -> Handler -> Entry
 let route(method, path, handler) = Definition {
   method: method,
@@ -430,7 +430,7 @@ let ws(path, handler) = WsDefinition { path: path, handler: handler }
 # @example
 #   Rodolfo.router do
 #     plug(Rodolfo.Plugs.errors())
-#     get "/" do |_| "hello" end
+#     get "/" do "hello" end
 #   end
 plug : Plug -> Entry
 let plug(wrapper) = PlugEntry { wrapper: wrapper }
@@ -472,7 +472,7 @@ end
 #   Rodolfo.router do
 #     scope "/api" do
 #       plug(requireApiKey())
-#       get "/books" do |_| ... end
+#       get "/books" do ... end
 #     end
 #   end
 scope : String -> Block<[Entry]> -> Entry
@@ -495,12 +495,12 @@ end
 #
 # @example
 #   let admin = Rodolfo.router do
-#     get "/stats" do |_| "42 requests" end
+#     get "/stats" do "42 requests" end
 #   end
 #
 #   let api = Rodolfo.router do
 #     mount("/admin", admin)
-#     get "/" do |_| "home" end
+#     get "/" do "home" end
 #   end
 mount : String -> Router -> Entry
 let mount(prefix, sub) = Scope { prefix: prefix, children: sub.entries }
@@ -515,7 +515,7 @@ let mount(prefix, sub) = Scope { prefix: prefix, children: sub.entries }
 #
 # @example
 #   let api = Rodolfo.router do
-#     get "/books/me" do |_| "me" end
+#     get "/books/me" do "me" end
 #     get "/books/:id" do |env| env.param("id").try end
 #   end
 router : Block<[Entry]> -> Router
