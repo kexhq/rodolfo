@@ -7,8 +7,7 @@
 # Run this, then open http://localhost:3000/ in two or more browser tabs (or
 # two different browsers) — enter "let-me-in" as the room password and a
 # different name in each, and chat between them. The two pages themselves
-# live in `views.kex` and `views/*.html.ket` — see there for how they're
-# built.
+# live in `chat/views.kex` — see there for how they're built.
 #
 # `Room` is declared right here in the entrypoint module on purpose — a
 # `serving` process whose slots are called from a route handler only works
@@ -26,25 +25,55 @@ using Chat.Views
 roomToken : String
 let roomToken = "let-me-in"
 
-# The connected sockets. `broadcast` doubles as the only place a dead
-# connection gets noticed: a socket whose `send` fails — the peer closed
-# without a clean handshake, most likely — is dropped from the room rather
-# than tracked down by a separate "leave" message.
+# Every connection, by name — a name doubles as the room's idea of "who's
+# here", so `join` can refuse a name already in use and the client can be
+# shown a live roster, not just a scrolling log. `broadcast` doubles as the
+# only place a dead connection gets noticed: a socket whose `send` fails —
+# the peer closed without a clean handshake, most likely — is dropped from
+# the room rather than tracked down by a separate message.
 record Room do
-  sockets : [Connection] = []
+  users : [(String, Connection)] = []
 end
 
 serving Room do
-  slot join(socket: Connection) -> Void do
-    new.sockets = [socket | @sockets]
-    return new
+  # Checked from the login page itself, before ever reaching `/chat` — a
+  # nicer failure than "you connected, then got kicked off" for the common
+  # case. `join` re-checks (and is the one that actually matters): a second
+  # connection could pick the same name in the gap between this check and
+  # the next request, and only `join` runs atomically with the join itself.
+  slot taken?(name: String) -> Reply<Bool> do
+    return { reply: @users.any? { |user| match user do (existing, _) => existing == name end } }
+  end
+
+  # `None` means the name is already taken and nothing changed; `Just`
+  # carries the roster (every name, this one included) to announce.
+  slot join(name: String, socket: Connection) -> Reply<[String]?> do
+    let taken = @users.any? { |user| match user do (existing, _) => existing == name end }
+    if taken
+      return { reply: None }
+    else
+      new.users = [(name, socket) | @users]
+      return { new, reply: Just(new.users.map { |user| match user do (existing, _) => existing end }) }
+    end
+  end
+
+  # The roster after removal, to announce the same way `join` does.
+  slot leave(name: String) -> Reply<[String]> do
+    new.users = @users.filter { |user| match user do (existing, _) => existing != name end }
+    return { new, reply: new.users.map { |user| match user do (existing, _) => existing end } }
   end
 
   slot broadcast(text: String) -> Void do
-    new.sockets = @sockets.filter { |socket| socket.send(Text(text)).ok? }
+    new.users = @users.filter { |user| match user do (_, socket) => socket.send(Text(text)).ok? end }
     return new
   end
 end
+
+# The roster travels over the same channel as ordinary chat lines, tagged so
+# the client's own JS can tell "here's who's here now" apart from "someone
+# said something" — see `chat/views.kex`'s `appendSystem`/`updateRoster`.
+rosterLine : [String] -> String
+let rosterLine(names) = "$users:${names.join(",")}"
 
 main do
   let room = Process.spawn(Room {})
@@ -53,12 +82,23 @@ main do
     get "/" do |env|
       let token = env.query("token").or("")
       let name = env.query("name").or("").trim
-      let attempted = !token.empty? || !name.empty?
-      if !token.empty? && token == roomToken && !name.empty?
+      # Whether the form was submitted at all, not whether either field came
+      # back non-empty — an empty submission (both fields blank) still sets
+      # `token=&name=` on the query string, present but empty, which is
+      # exactly the case that needs the error shown rather than treated
+      # like a first visit with no query string at all.
+      let attempted = env.query("token").set? || env.query("name").set?
+      let validCredentials = !token.empty? && token == roomToken && !name.empty?
+      if validCredentials && !room.taken?(name).try
         let query = Form.from([("token", roomToken), ("name", name)]).encode
         Response.HTML { body: "${Chat.Views.chat(name, "/chat?${query}")}" }
       else
-        Response.HTML { body: "${Chat.Views.login(attempted then "Wrong password, or a name is needed." else "")}" }
+        let error = if !attempted then "" else
+          if validCredentials then "\"${name}\" is already in the room — try another name." else
+            "Wrong password, or a name is needed."
+          end
+        end
+        Response.HTML { body: "${Chat.Views.login(error)}" }
       end
     end
 
@@ -68,16 +108,39 @@ main do
       if token != roomToken || name.empty?
         socket.close
       else
-        room.join(socket)
-        room.broadcast("* ${name} joined")
-        loop do
-          match socket.receiveMessage.try do
-            Text(text) => room.broadcast("${name}: ${text}")
-            CloseMessage(_, _) => break
-            _ => Void
+        match room.join(name, socket).try do
+          Just(roster) => do
+            room.broadcast("* ${name} joined")
+            room.broadcast(rosterLine(roster))
+            # An abrupt disconnect — a dropped network, a closed laptop lid —
+            # fails `receiveMessage` rather than ever handing back a
+            # `CloseMessage`, and an uncaught `.try` failure here would
+            # unwind straight out of this handler, skipping `leave` below
+            # entirely. That would leave a phantom entry in `Room` forever:
+            # the name stays "taken" until some later `broadcast` happens to
+            # try this dead socket and prune it. Catching it and falling
+            # through to the same cleanup as a clean disconnect is what
+            # keeps a name reusable and the roster honest.
+            trying do
+              loop do
+                match socket.receiveMessage.try do
+                  Text(text) => room.broadcast("${name}: ${text}")
+                  CloseMessage(_, _) => break
+                  _ => Void
+                end
+              end
+            rescue
+              _ => Void
+            end
+            let remaining = room.leave(name).try
+            room.broadcast("* ${name} left")
+            room.broadcast(rosterLine(remaining))
+          end
+          None => do
+            socket.send(Text("* \"${name}\" is already in this room — try another name.")).try
+            socket.close
           end
         end
-        room.broadcast("* ${name} left")
       end
     end
   end
