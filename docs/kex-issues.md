@@ -1044,6 +1044,15 @@ live server: `get "/" do "Hello from Kex!" end` now answers 200 with the
 right body, and a one-arg `do |ctx| ... end` route on the same router still
 resolves to the other overload correctly. Speced in `spec/rodolfo.spec.kex`.
 
+The silent-crash gap itself — `kex -C` catches it, `--run` doesn't, and
+nothing logs anything when the mismatched handler is actually invoked —
+is filed separately as kexhq/kex#378, using `rodolfo.kex` at `41057d7~1`
+(before this migration) as the repro. I spent a long time trying to reduce
+it to a minimal, Rodolfo-free case and couldn't reliably reproduce the
+*silent* part outside Rodolfo's actual module — every trimmed-down version
+with the same type shapes got caught correctly by both `-C` and `--run`.
+Filed with the real repro rather than continuing to chase an isolated one.
+
 Filed upstream as kexhq/kex#354.
 
 Found on `293a0b5` while asking "does a Rodolfo route handler need to bind
