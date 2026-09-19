@@ -14,9 +14,10 @@
 # reliably when the `serving` block sits in the entrypoint, not an imported
 # module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
 using Rodolfo
-using URI, only: [Form]
+using Net, only: [NetError, Timeout]
 using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
 using Chat.Views
+using Chat.Protocol
 
 # Deliberately simple: one shared password for the whole room, checked
 # against a query parameter on both the login page and the WebSocket URL
@@ -69,12 +70,6 @@ serving Room do
   end
 end
 
-# The roster travels over the same channel as ordinary chat lines, tagged so
-# the client's own JS can tell "here's who's here now" apart from "someone
-# said something" — see `chat/views.kex`'s `appendSystem`/`updateRoster`.
-rosterLine : [String] -> String
-let rosterLine(names) = "$users:${names.join(",")}"
-
 main do
   let room = Process.spawn(Room {})
 
@@ -90,7 +85,14 @@ main do
       let attempted = env.query("token").set? || env.query("name").set?
       let validCredentials = !token.empty? && token == roomToken && !name.empty?
       if validCredentials && !room.taken?(name).try
-        let query = Form.from([("token", roomToken), ("name", name)]).encode
+        # `URI.Form` fully qualified, with no `using URI` above: importing
+        # `URI` makes the run stage the toolchain's own prebuilt
+        # `Kex.URI.beam` over the one compiling this program produces, and
+        # only the latter carries the `query/2` dispatcher clause that sends
+        # a `Rodolfo.Context` receiver to Rodolfo's own `query`. With the
+        # import, every `env.query(...)` here fails with `undef` at runtime
+        # — see docs/kex-issues.md #27.
+        let query = URI.Form.from([("token", roomToken), ("name", name)]).encode
         Response.HTML { body: "${Chat.Views.chat(name, "/chat?${query}")}" }
       else
         let error = if !attempted then "" else
@@ -110,34 +112,41 @@ main do
       else
         match room.join(name, socket).try do
           Just(roster) => do
-            room.broadcast("* ${name} joined")
-            room.broadcast(rosterLine(roster))
-            # An abrupt disconnect — a dropped network, a closed laptop lid —
-            # fails `receiveMessage` rather than ever handing back a
-            # `CloseMessage`, and an uncaught `.try` failure here would
-            # unwind straight out of this handler, skipping `leave` below
-            # entirely. That would leave a phantom entry in `Room` forever:
-            # the name stays "taken" until some later `broadcast` happens to
-            # try this dead socket and prune it. Catching it and falling
-            # through to the same cleanup as a clean disconnect is what
-            # keeps a name reusable and the roster honest.
-            trying do
-              loop do
-                match socket.receiveMessage.try do
-                  Text(text) => room.broadcast("${name}: ${text}")
-                  CloseMessage(_, _) => break
-                  _ => Void
-                end
+            room.broadcast(Chat.Protocol.systemLine("${name} joined"))
+            room.broadcast(Chat.Protocol.rosterLine(roster))
+            # `receiveMessage` is matched as the `Result` it is, rather than
+            # `.try`-ed, because the two ways it fails need opposite answers.
+            #
+            # A `Timeout` is not a disconnect at all: the connection process
+            # answers a receive with its own 31-second call timeout, so a
+            # client who simply hasn't typed in half a minute — which is most
+            # of them, most of the time — reports one while still perfectly
+            # connected. Treating it as a disconnect is what made the room
+            # drop people at random (docs/kex-issues.md #28); going back
+            # around the loop is what keeps them here.
+            #
+            # Every other error is a real disconnect. An abrupt one — a
+            # dropped network, a closed laptop lid — fails the receive rather
+            # than ever handing back a `CloseMessage`, and leaving the loop on
+            # it runs the same cleanup a clean close does. Skipping that
+            # cleanup would leave a phantom entry in `Room` forever: the name
+            # stays "taken" until some later `broadcast` happens to try this
+            # dead socket and prune it.
+            loop do
+              match socket.receiveMessage do
+                Ok(Text(text)) => room.broadcast(Chat.Protocol.chatLine(name, text))
+                Ok(CloseMessage(_, _)) => break
+                Ok(_) => Void
+                Error(NetError { kind: Timeout }) => Void
+                Error(_) => break
               end
-            rescue
-              _ => Void
             end
             let remaining = room.leave(name).try
-            room.broadcast("* ${name} left")
-            room.broadcast(rosterLine(remaining))
+            room.broadcast(Chat.Protocol.systemLine("${name} left"))
+            room.broadcast(Chat.Protocol.rosterLine(remaining))
           end
           None => do
-            socket.send(Text("* \"${name}\" is already in this room — try another name.")).try
+            socket.send(Text(Chat.Protocol.systemLine("\"${name}\" is already in this room — try another name."))).try
             socket.close
           end
         end

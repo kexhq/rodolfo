@@ -1,10 +1,12 @@
 {
   "version": 1,
-  "workspace": {"members": {"hello": "examples/hello", "library": "examples/library", "requestinfo": "examples/requestinfo", "rodolfo": ".", "statusapi": "examples/statusapi", "website": "examples/website"}, "manifest_fingerprint": "72a9a5ecd614b38663b7d41bb7b2f1068a7cbbd72bc9de5a5adfdac7e20e3f7e"},
-  "toolchain": {"kex": "0.4.0", "kex_requirement": ">= 0.4.0-beta.2 >= 0.4.0-beta >= 0.4.0-beta >= 0.4.0-beta >= 0.4.0-beta >= 0.4.0-beta", "otp": 29, "otp_requirement": ""},
+  "workspace": {"members": {"chat": "examples/chat", "hello": "examples/hello", "library": "examples/library", "plugs": "examples/plugs", "requestinfo": "examples/requestinfo", "rodolfo": ".", "statusapi": "examples/statusapi", "website": "examples/website"}, "manifest_fingerprint": "05f6ca55bb9e0ba0144890ff675f53775c58cf939cb4b53d58783a08dac3089f"},
+  "toolchain": {"kex": "0.4.0", "kex_requirement": ">= 0.4.0-beta.2 >= 0.4.0-beta", "otp": 29, "otp_requirement": ""},
   "packages": {
+    "chat": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/chat", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
     "hello": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/hello", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
     "library": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/library", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
+    "plugs": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/plugs", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
     "requestinfo": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/requestinfo", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
     "rodolfo": {"version": "0.2.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": ".", "sha256": "", "groups": [], "dependencies": [], "plugins": {}, "workspace": true},
     "statusapi": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/statusapi", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},

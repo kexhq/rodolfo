@@ -1,0 +1,56 @@
+# The wire format, checked without a server: every line the room broadcasts is
+# a pure function of what happened, and the page's JS dispatches on the prefix
+# alone. A change here that `views.kex` doesn't follow silently turns a roster
+# into a chat line in the log, which is exactly what these cases catch.
+using Chat.Protocol
+
+describe("Chat.Protocol.rosterLine") do
+  it("carries the whole roster, comma-separated") do
+    assert(Chat.Protocol.rosterLine(["Ada", "Bob"]) == "$users:Ada,Bob")
+  end
+
+  it("says an empty room with the prefix and nothing after it") do
+    assert(Chat.Protocol.rosterLine([]) == "$users:")
+  end
+
+  it("keeps a single name alone, with no trailing separator") do
+    assert(Chat.Protocol.rosterLine(["Ada"]) == "$users:Ada")
+  end
+
+  it("starts with the prefix the page's JS splits on") do
+    assert(Chat.Protocol.rosterLine(["Ada"]).startsWith?("$users:"))
+  end
+end
+
+describe("Chat.Protocol.systemLine") do
+  it("marks a room event with the prefix, not a name") do
+    assert(Chat.Protocol.systemLine("Ada joined") == "* Ada joined")
+  end
+
+  it("cannot be mistaken for a roster line") do
+    assert(Chat.Protocol.systemLine("Ada left").startsWith?("$users:").falsy?)
+  end
+end
+
+describe("Chat.Protocol.chatLine") do
+  it("attributes what was said to who said it") do
+    assert(Chat.Protocol.chatLine("Ada", "hello") == "Ada: hello")
+  end
+
+  it("splits on the first separator only, so a message may contain one") do
+    let line = Chat.Protocol.chatLine("Ada", "re: hello")
+    assert(line == "Ada: re: hello")
+    assert(line.split(": ").first == Just("Ada"))
+  end
+
+  # A display name is whatever the login form was given, so a name that
+  # starts with another line's prefix does reach the page looking like that
+  # kind of line — the room has no namespace to keep them apart. Worth
+  # knowing before copying this wire format into something that matters: a
+  # real one would tag each line (a JSON envelope, say) rather than trust a
+  # prefix. Nothing is injected into the page either way; the client builds
+  # every line with `textContent`.
+  it("keeps a name that looks like a prefix verbatim, prefix and all") do
+    assert(Chat.Protocol.chatLine("* Ada", "hi") == "* Ada: hi")
+  end
+end

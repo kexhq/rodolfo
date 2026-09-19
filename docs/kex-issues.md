@@ -483,6 +483,141 @@ when this file was still a `.ket` template attempt — see #25) was left in
 one `html$` literal instead of being converted to `${error}`; a real bug
 of my own, unrelated to the module collision, fixed alongside it.
 
+### 27. A `using` of a stdlib module stages the toolchain's prebuilt beam over the one the build just compiled — every extended method on that name becomes `undef`
+
+Found 2026-09-19 in `examples/chat`, which answered a plain `GET /` with
+`500 Internal Server Error` and logged
+
+```
+Rodolfo: GET / returned a value that is not a Reply: Error(:undef)
+```
+
+while the `ws "/chat"` handler, reaching the same call one line in, crashed
+and closed every connection the instant it opened — and both symptoms came
+and went across builds that differed only in comments, which is what made it
+look random rather than reproducible.
+
+The call was `env.query("token")`, `query` being a method Rodolfo adds to its
+own `Context` record. Kex compiles a method call whose receiver type it can't
+pin statically into a call on the *dispatcher* for that method name, which
+lives in the module that already owns the name — here `Kex.URI`, since `URI`
+has a `query` of its own. Compiling this program emits a fresh `Kex.URI.beam`
+carrying a dispatcher clause for the new receiver:
+
+```erlang
+'query'/2 = fun (_a0, _a1) ->
+  case _a0 of
+    _gv when call 'erlang':'is_record'(_gv, 'Rodolfo.Context', 3) ->
+      call 'Kex.Rodolfo':'query/Context'(_a0, _a1)
+    _Wc4 when 'true' -> call 'kex_prelude':'query'(_a0, _a1)
+  end
+```
+
+That beam reaches `ebin/` correctly. It is the *run* that loses it: the temp
+directory `kex --run` stages gets the toolchain's own prebuilt
+`Kex.URI.beam` instead, which has no `query/2` at all, and the call dies as
+`undef` at the first request.
+
+Caught with a tracer on `error_handler:undefined_function/3`
+(`ERL_AFLAGS="-pa … -eval tracer_start:go()"`, so it installs before
+`kex_main:main/0`), which names the MFA that failed to resolve rather than
+the `Error(:undef)` value the failure eventually becomes:
+
+```
+*** UNRESOLVED {'Kex.URI',query,2} error:undef
+```
+
+and confirmed from both sides:
+
+| `Kex.URI.beam` | `query/2` | Size |
+| --- | --- | --- |
+| `examples/chat/ebin/` (compiled from this program) | yes | 3968 |
+| the staged `/tmp/kex_*/` run directory | **no** | 9852 |
+| `~/.local/share/tey/toolchains/0.4.0-beta.2/share/kex/runtime/` | no | 9852 |
+
+A direct import is one trigger, and the use is irrelevant to it: `using URI,
+only: [Form]` in `examples/chat`'s entrypoint is enough, and the program
+never mentions `URI.query`. Drop the `using` and the same `URI.Form.from(...)`
+call written out in full stages the compiled beam instead, `query/2`
+resolves, and every request succeeds. Running the same `ebin/` directly
+(`erl -pa ebin -eval 'kex_main:main()'`) also works, since nothing shadows
+the compiled module there — the staging step is the whole of the defect.
+
+It is **not** only the direct import, though, and this is the part that has
+no workaround: `spec/rodolfo.spec.kex` has no `using URI` anywhere and its
+"decodes a query field the way a browser submits a GET form" case fails on
+this toolchain with the same traced `{'Kex.URI',query,2} error:undef`
+(49 passed, 1 failed), reaching `Kex.URI` only through `Net.HTTP`. That case
+tests `env.query` itself, so there is nothing to rewrite around it; it stays
+red until this is fixed upstream. It is the one failing case in the suite,
+and it fails for this reason and not for anything the spec or `src/` does.
+
+Workaround where there is one, and what `examples/chat` ships: no `using
+URI`; `URI.Form.from` fully qualified at the one call site that needs it.
+Anything that extends a method name the stdlib already owns — which is most
+of what a framework does to a request context — is exposed to this, so the
+general shape is worth fixing upstream rather than naming module by module.
+
+### 28. A WebSocket receive gives up after 31 seconds and reports a live, idle client as closed
+
+Filed upstream as kexhq/kex#381.
+
+Found 2026-09-19 in `examples/chat`, and the reason a room drops people at
+random: anyone who hasn't typed in half a minute is disconnected, which in a
+chat room is nearly everyone nearly all of the time. A client sitting idle is
+closed at **31.0s**, every time:
+
+```
+   0.0 connected
+   0.0 op=1 b'* alice joined'
+   0.0 op=1 b'$users:alice'
+  31.0 op=8 b'\x03\xe8'
+```
+
+`runtime/src/kex_intrinsic_netwebsocket.erl`'s `call/2` waits `after 31000`
+for any reply and answers a `Timeout` `NetError` when the budget passes. For
+`send` that is a real budget; for `receive_message` there is nothing to time
+out — the call is *supposed* to block until the peer says something, and
+since PR #371 the connection process no longer imposes a deadline of its own
+(#24), so the 31s cap is now the only thing ending an idle receive. The
+connection is still open and the client still there; only the caller has been
+told otherwise, and a handler that treats a failed receive as a disconnect —
+the obvious reading, and what the example did — hangs up on a live client.
+
+A client-side heartbeat hides it, but that is a workaround written into every
+page rather than a fix: a receive with no deadline is the normal way to serve
+a WebSocket, and `receiveMessage` should either wait indefinitely or take an
+explicit timeout from the caller. kexhq/kex#381 asks for the latter —
+`receiveMessage(timeout: Duration?)`, `None` meaning "as long as the peer
+stays connected" and the no-argument form defaulting to it — and for
+`call/2` to stop lending the receive a budget meant for `send`. The upstream
+report carries a dependency-free 27-line repro; a copy lives in this
+session's notes rather than in the tree, since it exercises `Net.HTTP`
+directly and has nothing to do with Rodolfo.
+
+Workaround, and what `examples/chat` ships: match `receiveMessage` as the
+`Result` it is instead of `.try`-ing it, and tell the two failures apart —
+`Error(NetError { kind: Timeout })` goes back around the loop, everything
+else is a real disconnect and leaves it:
+
+```rb
+loop do
+  match socket.receiveMessage do
+    Ok(Text(text)) => room.broadcast(Chat.Protocol.chatLine(name, text))
+    Ok(CloseMessage(_, _)) => break
+    Ok(_) => Void
+    Error(NetError { kind: Timeout }) => Void
+    Error(_) => break
+  end
+end
+```
+
+Verified with two raw WebSocket clients against a live server: an idle
+connection now survives well past the old cap and still receives and sends
+after 70s, a clean close still announces `* name left` and redraws the
+roster, and an abrupt drop (RST, no close handshake) still runs the same
+cleanup — the `Closed` error reaches the `Error(_)` arm.
+
 ### 3. `tey install` refuses the toolchain it needs
 
 **Fixed** on `5a088fe` (Tey side, built from `../kex`'s `make build-tey`).
