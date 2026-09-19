@@ -711,27 +711,20 @@ private do
   # from `.try`-ing its way to some other value (an escaped +Option+, for
   # instance) — see kexhq/rodolfo#7. Only a +String+ takes the plain-text
   # path; anything else is a bug in the application, logged and answered as
-  # a 500 rather than silently served as 200 text.
-  #
-  # One function with a `match`, not multi-clause overloads: overloaded
-  # `respond` clauses dispatched correctly when called directly from `main`
-  # but crashed with a BEAM `:if_clause` error when called from the closure
-  # a served request actually invokes — see docs/kex-issues.md #17.
-  foul respond(reply: Reply, route: String) -> Net.HTTP.Response<Binary> do
-    match reply do
-      text: String => Net.HTTP.Response.text(200, text)
-      Rodolfo.Markup.Safe { markup } => textual(200, markup, Headers.empty, "text/html; charset=utf-8")
-      Rodolfo.Response.JSON { status, body, headers } => textual(status, body, headers, "application/json")
-      Rodolfo.Response.Text { status, body, headers } => textual(status, body, headers, "text/plain; charset=utf-8")
-      Rodolfo.Response.HTML { status, body, headers } => textual(status, body, headers, "text/html; charset=utf-8")
-      Rodolfo.Response.Raw { status, body, headers, contentType } => Net.HTTP.Response.binary(status, body, typed(headers, contentType))
-      Rodolfo.Response.Empty { status, headers } => Net.HTTP.Response.binary(status, Binary.empty, headers)
-      Rodolfo.Response.Redirect { status, location, headers } => Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
-      other => do
-        IO.printError("Rodolfo: ${route} returned a value that is not a Reply: ${other}")
-        Net.HTTP.Response.text(500, "Internal Server Error")
-      end
-    end
+  # a 500 rather than silently served as 200 text. The final `Any` clause is
+  # what catches that: every other clause matches one of +Reply+'s own
+  # variants, so anything left over is not a +Reply+ at all.
+  foul respond(reply: String, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.text(200, reply)
+  foul respond(Rodolfo.Markup.Safe { markup }, route: String) -> Net.HTTP.Response<Binary> = textual(200, markup, Headers.empty, "text/html; charset=utf-8")
+  foul respond(Rodolfo.Response.JSON { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "application/json")
+  foul respond(Rodolfo.Response.Text { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "text/plain; charset=utf-8")
+  foul respond(Rodolfo.Response.HTML { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "text/html; charset=utf-8")
+  foul respond(Rodolfo.Response.Raw { status, body, headers, contentType }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, body, typed(headers, contentType))
+  foul respond(Rodolfo.Response.Empty { status, headers }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, Binary.empty, headers)
+  foul respond(Rodolfo.Response.Redirect { status, location, headers }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
+  foul respond(other: Any, route: String) -> Net.HTTP.Response<Binary> do
+    IO.printError("Rodolfo: ${route} returned a value that is not a Reply: ${other}")
+    Net.HTTP.Response.text(500, "Internal Server Error")
   end
 
   foul textual(status: Integer, body: String, headers: Headers, contentType: String) -> Net.HTTP.Response<Binary> do

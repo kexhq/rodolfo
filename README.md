@@ -228,14 +228,11 @@ handler brings them in itself, as above. Reach for
 `ws` when a client needs to negotiate a subprotocol or be rejected before the
 101 response goes out.
 
-A `ws` handler talking only to its own connection — reading, replying,
-reading again — works reliably. Handing the `Connection` to another process
-(a shared room, a pub/sub registry) to push to it from outside the handler
-does not: Kex's server-side WebSocket connection can't be sent to from
-another process while it's idle, which is the normal state of a listener
-that isn't currently typing — see docs/kex-issues.md #24 (filed upstream as
-kexhq/kex#370). A broadcast chat example hit this and was pulled rather than
-shipped broken; there is no workaround yet.
+Handing the `Connection` to another process (a shared room, a pub/sub
+registry) to push to it from outside its own handler now works too —
+`kexhq/kex#370` (a server-side connection couldn't be sent to while idle,
+which is the normal state of a listener that isn't currently typing) is
+fixed. See `examples/chat` for a broadcast room built on exactly that.
 
 ## Serving
 

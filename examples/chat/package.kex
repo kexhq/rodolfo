@@ -1,0 +1,12 @@
+# An example run as a workspace member: it depends on the Rodolfo package
+# at the root of this checkout, not a published release.
+package "chat" do
+  version("0.1.0")
+  description("Rodolfo example: a broadcast WebSocket chat room")
+  kex(">= 0.4.0-beta")
+  license("MIT")
+
+  entrypoint("src/main.kex")
+
+  tey("rodolfo", workspace: true)
+end

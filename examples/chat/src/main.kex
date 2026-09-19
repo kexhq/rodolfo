@@ -1,0 +1,54 @@
+# A broadcast chat room over a single `ws` route: every connected client
+# gets every message anyone sends. Run this, then connect two or more
+# WebSocket clients to ws://localhost:3000/chat and type from either one.
+#
+# `Room` is declared right here in the entrypoint module on purpose — a
+# `serving` process whose slots are called from a route handler only works
+# reliably when the `serving` block sits in the entrypoint, not an imported
+# module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
+using Rodolfo
+using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
+
+# The connected sockets. `broadcast` doubles as the only place a dead
+# connection gets noticed: a socket whose `send` fails — the peer closed
+# without a clean handshake, most likely — is dropped from the room rather
+# than tracked down by a separate "leave" message.
+record Room do
+  sockets : [Connection] = []
+end
+
+serving Room do
+  slot join(socket: Connection) -> Void do
+    new.sockets = [socket | @sockets]
+    return new
+  end
+
+  slot broadcast(text: String) -> Void do
+    new.sockets = @sockets.filter { |socket| socket.send(Text(text)).ok? }
+    return new
+  end
+end
+
+main do
+  let room = Process.spawn(Room {})
+
+  let site = Rodolfo.router do
+    get "/" do |_|
+      "Connect a WebSocket client to ws://localhost:3000/chat"
+    end
+
+    ws "/chat" do |socket|
+      room.join(socket)
+      loop do
+        match socket.receiveMessage.try do
+          Text(text) => room.broadcast(text)
+          CloseMessage(_, _) => break
+          _ => Void
+        end
+      end
+    end
+  end
+
+  IO.printLine("Chat room on ws://localhost:3000/chat")
+  site.start(3000).try
+end

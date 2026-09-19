@@ -15,6 +15,24 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-19, against `kex 0.4.0-beta.3 (b913dac)`
+
+`../kex` moved from `3c4152e` to `main`'s tip (`b913dac`, PR #374
+"fix-atoms" and its follow-ups). Checked via a separate `git worktree`
+rather than the shared `../kex` checkout, which had unrelated work in
+progress on its own branch at the time.
+
+**#17 is fixed**, closing kexhq/kex#347 — see its own entry below for the
+migration. This is the significant one: `Rodolfo.respond` is genuine
+multi-clause style again, matching the shape the bug originally forced it
+away from.
+
+Also fixed upstream in this range, neither touching `src/rodolfo.kex`:
+kexhq/kex#366 (re-verified again, still holds), kexhq/kex#370 (the
+WebSocket idle-push bug — re-verified with its own repro, now answers in
+~3s instead of hanging ~30s and failing), kexhq/kex#343, kexhq/kex#337, and
+kexhq/kex#90, none of which Rodolfo ever had a workaround for.
+
 ## Re-verified 2026-09-17, against `kex 0.4.0-beta.3 (3ee1b81)`
 
 `../kex` moved from `293a0b5` to `main`'s tip (`3ee1b81`), pulling in `304b92f`
@@ -297,6 +315,15 @@ catalogue in a tab-separated file (`src/shelf.kex`) rather than a process: a
 store in its own module is exactly the failing cell.
 
 ### 24. A server-side WebSocket `Connection` can't be sent to from another process while it's idle
+
+**Fixed** on `kexhq/kex` `main` (merged as PR #371, "Fix WebSocket server_loop
+blocking its mailbox on an idle client"), closing kexhq/kex#370. Re-verified
+2026-09-19 against `main` @ `b913dac` with the exact repro filed upstream: the
+push now succeeds in ~3s instead of hanging ~30s and reporting the connection
+closed. This unblocks a broadcast chat room example — see #20/#23's own
+entries for the DSL support this depends on. Nothing in `src/rodolfo.kex`
+needed migrating for this fix itself (there was no workaround, only the
+reverted example); a real `examples/chat` is now buildable.
 
 Filed upstream as kexhq/kex#370.
 
@@ -705,6 +732,19 @@ let it infer — `let span = HIGH - LOW` alone compiles and prints `650`.
 never subtracted under an annotation.
 
 ### 17. Multi-clause functions silently drop clauses when the argument's static type is an abstract union
+
+**Fixed**, closing kexhq/kex#347 — merged 2026-09-19 (`kexhq/kex` `main` @
+`b913dac`, PR #374's "Even more fixes" commit, alongside its own new
+regression spec `spec/multiclause_record_pattern_dispatch.kex`, which mirrors
+this entry's exact `respond`/`dispatchGeneric` shape and passes). Re-verified
+against that build and migrated `src/rodolfo.kex`: `Rodolfo.respond` is genuine
+multi-clause style again — one `let`/`foul respond(...)` declaration per
+`Reply` variant, ending in a catch-all `respond(other: Any, route: String)`
+for #7's "not actually a Reply" case — instead of one function with an
+internal `match`. Full spec suite (48 examples in `spec/rodolfo.spec.kex`,
+including every case that specifically exercises `respond` from inside a
+served request's closure, plus all 67 across `examples/library`) passes
+unchanged.
 
 Filed upstream as kexhq/kex#347.
 
