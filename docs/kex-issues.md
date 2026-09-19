@@ -1018,11 +1018,40 @@ doc comment in `src/rodolfo.kex` for the full shape and rationale.
 
 ### 22. A block can't ignore a parameter it doesn't need — `|_|` (or a named, unused binding) is mandatory everywhere
 
-**Fixed** on `cc5c195` (merged via kexhq/kex#359). Re-verified directly:
-`3.times do IO.printLine("hi") end` now runs with no `|_|`. `|_|` is no
-longer required anywhere in Rodolfo's own examples or docs, but nothing
-needed migrating — it was never wrong to keep writing it, just no longer
-mandatory, so the existing `|_|`-carrying examples stay as-is.
+**Fixed** on `cc5c195` (merged via kexhq/kex#359) — but only for stdlib
+block-takers. `3.times do IO.printLine("hi") end` runs fine with no `|_|`,
+but the fix isn't a general "a zero-arg block satisfies a one-arg function
+type" coercion: `.times`' own signature grew a **second overload**,
+`times :> Block<Void> -> Void`, alongside the original `(Integer -> Void) ->
+Void` — `Block<T>` is a compiler-builtin marker type for exactly this,
+`kex -C`'s special-cased in the parser and type system, not something a
+library defines itself.
+
+Confirmed the hard way: `get "/" do "Hello from Kex!" end` (no `|_|`) against
+`Handler = Context -> Reply` type-checked clean via `kex -C` **and** `--run`,
+the server started fine — and crashed with a real `500 Internal Server
+Error` the moment an actual request hit that route, since nothing ever
+coerced the zero-arg block into a real `Context -> Reply`. This is worse
+than the original bug: it compiles and runs right up until a request
+actually arrives.
+
+2026-09-19: migrated `src/rodolfo.kex` to the same `Block<T>`-overload
+pattern `.times` itself uses — `route`, `get`, `post`, `put`, `patch`,
+`delete`, `head`, and `options` each gained a second declaration taking
+`Block<Reply>` instead of `Handler`, wrapping it into a real handler that
+discards the context (`do |_| block() end`). Verified end to end against a
+live server: `get "/" do "Hello from Kex!" end` now answers 200 with the
+right body, and a one-arg `do |ctx| ... end` route on the same router still
+resolves to the other overload correctly. Speced in `spec/rodolfo.spec.kex`.
+
+The silent-crash gap itself — `kex -C` catches it, `--run` doesn't, and
+nothing logs anything when the mismatched handler is actually invoked —
+is filed separately as kexhq/kex#378, using `rodolfo.kex` at `41057d7~1`
+(before this migration) as the repro. I spent a long time trying to reduce
+it to a minimal, Rodolfo-free case and couldn't reliably reproduce the
+*silent* part outside Rodolfo's actual module — every trimmed-down version
+with the same type shapes got caught correctly by both `-C` and `--run`.
+Filed with the real repro rather than continuing to chase an isolated one.
 
 Filed upstream as kexhq/kex#354.
 

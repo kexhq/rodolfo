@@ -8,7 +8,7 @@
 #
 #   main do
 #     let site = Rodolfo.router do
-#       get "/" do |_|
+#       get "/" do
 #        "Hello from Kex!"
 #       end
 #
@@ -98,7 +98,7 @@ type Redirection = SeeOther | MovedPermanently | Found | Temporary | Permanent
 # @return Response<Binary> the redirect response
 #
 # @example
-#   get "/old" do |_|
+#   get "/old" do
 #     redirectTo("/new")   # redirect to /new, must be always returned from the route block
 #   end
 redirectTo : String -> Reply
@@ -112,7 +112,7 @@ let redirectTo(location) = redirectTo(location, SeeOther)
 # @return Response<Binary> the redirect response
 #
 # @example
-#   get "/old" do |_|
+#   get "/old" do
 #     redirectTo("/new", MovedPermanently)   # redirect to /new, must be always returned from the route block
 #   end
 redirectTo : String -> Redirection -> Reply
@@ -190,7 +190,7 @@ end
 # +Safe+ is here because markup is a reply in its own right: returning an
 # ``html$`...` `` literal from a route sends it as a 200 text/html page. A
 # plain +String+ becomes a 200 text/plain body, which is what makes
-# +do |_| "hello" end+ a complete route.
+# +do "hello" end+ a complete route.
 type Reply = String
   | Rodolfo.Markup.Safe
   | Rodolfo.Response.JSON
@@ -296,13 +296,18 @@ end
 # @return [Entry] the declaration
 #
 # @example
-#   route "PROPFIND", "/files" do |_| Response.Empty {} end
+#   route "PROPFIND", "/files" do Response.Empty {} end
 route : String -> String -> Handler -> Entry
 let route(method, path, handler) = Definition {
   method: method,
   path: path,
   handler: handler
 }
+
+# The same declaration, for a route block that ignores the request entirely
+# — `Block<Reply>` (no `|_|`) rather than `Handler` (`|_|` mandatory).
+route : String -> String -> Block<Reply> -> Entry
+let route(method, path, block) = route(method, path, do |_| block() end)
 
 # Declares a +GET+ route.
 #
@@ -315,6 +320,9 @@ let route(method, path, handler) = Definition {
 get : String -> Handler -> Entry
 let get(path, handler) = route("GET", path, handler)
 
+get : String -> Block<Reply> -> Entry
+let get(path, block) = route("GET", path, block)
+
 # Declares a +POST+ route.
 #
 # @param path [String] the route path
@@ -322,6 +330,9 @@ let get(path, handler) = route("GET", path, handler)
 # @return [Entry] the declaration
 post : String -> Handler -> Entry
 let post(path, handler) = route("POST", path, handler)
+
+post : String -> Block<Reply> -> Entry
+let post(path, block) = route("POST", path, block)
 
 # Declares a +PUT+ route.
 #
@@ -331,6 +342,9 @@ let post(path, handler) = route("POST", path, handler)
 put : String -> Handler -> Entry
 let put(path, handler) = route("PUT", path, handler)
 
+put : String -> Block<Reply> -> Entry
+let put(path, block) = route("PUT", path, block)
+
 # Declares a +PATCH+ route.
 #
 # @param path [String] the route path
@@ -338,6 +352,9 @@ let put(path, handler) = route("PUT", path, handler)
 # @return [Entry] the declaration
 patch : String -> Handler -> Entry
 let patch(path, handler) = route("PATCH", path, handler)
+
+patch : String -> Block<Reply> -> Entry
+let patch(path, block) = route("PATCH", path, block)
 
 # Declares a +DELETE+ route.
 #
@@ -347,6 +364,9 @@ let patch(path, handler) = route("PATCH", path, handler)
 delete : String -> Handler -> Entry
 let delete(path, handler) = route("DELETE", path, handler)
 
+delete : String -> Block<Reply> -> Entry
+let delete(path, block) = route("DELETE", path, block)
+
 # Declares a +HEAD+ route.
 #
 # @param path [String] the route path
@@ -355,6 +375,9 @@ let delete(path, handler) = route("DELETE", path, handler)
 head : String -> Handler -> Entry
 let head(path, handler) = route("HEAD", path, handler)
 
+head : String -> Block<Reply> -> Entry
+let head(path, block) = route("HEAD", path, block)
+
 # Declares an +OPTIONS+ route.
 #
 # @param path [String] the route path
@@ -362,6 +385,9 @@ let head(path, handler) = route("HEAD", path, handler)
 # @return [Entry] the declaration
 options : String -> Handler -> Entry
 let options(path, handler) = route("OPTIONS", path, handler)
+
+options : String -> Block<Reply> -> Entry
+let options(path, block) = route("OPTIONS", path, block)
 
 # Declares a WebSocket route: any client that completes the RFC 6455
 # handshake at `path` is handed a live `Connection`, ready to `send` and
@@ -404,10 +430,35 @@ let ws(path, handler) = WsDefinition { path: path, handler: handler }
 # @example
 #   Rodolfo.router do
 #     plug(Rodolfo.Plugs.errors())
-#     get "/" do |_| "hello" end
+#     get "/" do "hello" end
 #   end
 plug : Plug -> Entry
 let plug(wrapper) = PlugEntry { wrapper: wrapper }
+
+# Builders for `Plug` values.
+module Plug do
+  # Builds a `Plug` from a single two-argument block — the wrapped handler
+  # and the request environment together — instead of the nested closure
+  # form `do |inner| do |env| ... end end` a `Plug` is otherwise written as.
+  # Still a closure literal either way, so #21's rule is unaffected: pass
+  # `Plug.around` an inline block, never a named function referenced by `~`.
+  #
+  # @param body [Handler -> Context -> Reply] the wrapped handler and the
+  #   request environment in, a reply out
+  # @return [Plug] the plug
+  #
+  # @example A plug that adds a header to every response it lets through
+  #   poweredBy : Rodolfo.Plug
+  #   let poweredBy = Plug.around do |inner, env|
+  #     match inner(env) do
+  #       Response.Text { status, body, headers } =>
+  #         Response.Text { status: status, body: body, headers: headers.add("X-Powered-By", "Rodolfo").or(headers) }
+  #       reply => reply
+  #     end
+  #   end
+  around : (Handler -> Context -> Reply) -> Rodolfo.Plug
+  let around(body) = do |inner| do |env| body(inner, env) end end
+end
 
 # Groups declarations under a path prefix and, if it has any `plug` lines of
 # its own, a plug stack that applies only inside the group — stacked after
@@ -421,7 +472,7 @@ let plug(wrapper) = PlugEntry { wrapper: wrapper }
 #   Rodolfo.router do
 #     scope "/api" do
 #       plug(requireApiKey())
-#       get "/books" do |_| ... end
+#       get "/books" do ... end
 #     end
 #   end
 scope : String -> Block<[Entry]> -> Entry
@@ -444,12 +495,12 @@ end
 #
 # @example
 #   let admin = Rodolfo.router do
-#     get "/stats" do |_| "42 requests" end
+#     get "/stats" do "42 requests" end
 #   end
 #
 #   let api = Rodolfo.router do
 #     mount("/admin", admin)
-#     get "/" do |_| "home" end
+#     get "/" do "home" end
 #   end
 mount : String -> Router -> Entry
 let mount(prefix, sub) = Scope { prefix: prefix, children: sub.entries }
@@ -464,7 +515,7 @@ let mount(prefix, sub) = Scope { prefix: prefix, children: sub.entries }
 #
 # @example
 #   let api = Rodolfo.router do
-#     get "/books/me" do |_| "me" end
+#     get "/books/me" do "me" end
 #     get "/books/:id" do |env| env.param("id").try end
 #   end
 router : Block<[Entry]> -> Router

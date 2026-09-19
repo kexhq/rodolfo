@@ -10,7 +10,7 @@ using Rodolfo
 
 main do
   let site = Rodolfo.router do
-    get "/" do |_|
+    get "/" do
       "Hello from Kex!"
     end
 
@@ -26,7 +26,9 @@ end
 
 `router` collects the declarations; nothing binds a socket until you `start`
 it. `get`, `post`, `put`, `patch`, `delete`, `head`, and `options` are plain
-functions, and `route "METHOD", path` declares anything else.
+functions, and `route "METHOD", path` declares anything else. A route block
+that never needs the request can drop the parameter entirely — `get "/" do
+"Hello from Kex!" end` — no `|_|` required.
 
 ## Installing as a `Tey` package
 
@@ -51,7 +53,7 @@ against this repository's tags and records the exact commit in `tey.lock`.
 ## Replies
 
 A route block that returns a `String` — or anything else showable — sends it
-as a 200 `text/plain` body, which is why `do |_| "hello" end` is a complete
+as a 200 `text/plain` body, which is why `do "hello" end` is a complete
 route. Return one of the `Response` records to say more. Each carries a
 `status` that defaults to a sensible one and `headers` that default to none,
 so the usual case is a body and nothing else:
@@ -66,11 +68,11 @@ so the usual case is a body and nothing else:
 | `Response.Redirect { location }` | a `Location` header | 302 |
 
 ```rb
-get "/health" do |_|
+get "/health" do
   Response.JSON { body: JSON.stringify({ "status": "ok" }) }
 end
 
-post "/things" do |_|
+post "/things" do
   Response.Text {
     status: 201,
     body: "made",
@@ -127,6 +129,21 @@ end
 `inner` is the handler (or the next plug in) being wrapped. Calling it and
 using the result — as above — is an *around*-style plug: code can run before
 `inner`, after it, or both, which is also how a request-logging plug looks.
+`Plug.around` builds the same plug from one two-argument block instead of
+the nested closures — still a closure literal, so it's exactly as safe with
+respect to #21 as the form above:
+
+```rb
+poweredBy : Rodolfo.Plug
+let poweredBy = Plug.around do |inner, env|
+  match inner(env) do
+    Response.Text { status, body, headers } =>
+      Response.Text { status: status, body: body, headers: headers.add("X-Powered-By", "Rodolfo").or(headers) }
+    reply => reply
+  end
+end
+```
+
 Not calling `inner` at all is how a plug halts a request:
 
 ```rb
@@ -151,12 +168,12 @@ Rodolfo.router do
   plug(logged)                    # every route, wrapping everything below
   plug(poweredBy)
 
-  get "/" do |_| Response.Text { body: "hello" } end
+  get "/" do Response.Text { body: "hello" } end
 
   scope "/admin" do
     plug(requireToken("let-me-in"))   # only routes inside this scope
 
-    get "/stats" do |_| Response.Text { body: "42 requests served" } end
+    get "/stats" do Response.Text { body: "42 requests served" } end
   end
 end
 ```
@@ -175,12 +192,12 @@ path prefix — like `scope`, but the declarations were collected elsewhere:
 
 ```rb
 let admin = Rodolfo.router do
-  get "/stats" do |_| "42 requests" end
+  get "/stats" do "42 requests" end
 end
 
 let api = Rodolfo.router do
   mount("/admin", admin)
-  get "/" do |_| "home" end
+  get "/" do "home" end
 end
 ```
 

@@ -3,7 +3,7 @@ using Rodolfo
 
 main do
   let apiRouter = Rodolfo.router do
-    get "/health" do |_|
+    get "/health" do
       Response.JSON {
         body: JSON.stringify({ "status": "ok", "service": "catalog" })
       }

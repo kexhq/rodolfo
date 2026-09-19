@@ -6,7 +6,7 @@ end
 
 main do
   let site = Rodolfo.router do
-    get "/" do |_|
+    get "/" do
       Response.HTML {
         body: page(
           "Rodolfo Books",

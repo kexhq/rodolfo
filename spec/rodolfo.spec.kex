@@ -303,6 +303,18 @@ describe("Rodolfo serves requests") do
     Assert.equal(response.body.to(String).try, "Rodolfo says hello!")
   end
 
+  it("accepts a route block that ignores the request, with no |_|") do
+    let api = Rodolfo.router do
+      get "/" do "no context needed" end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(response.status.code, 200)
+    Assert.equal(response.body.to(String).try, "no context needed")
+  end
+
   it("extracts named route parameters") do
     let api = Rodolfo.router do
       get "/hello/:name" do |env|
@@ -499,6 +511,17 @@ end
 blocked : Rodolfo.Plug
 let blocked = do |inner| do |env| Response.Text { status: 403, body: "forbidden" } end end
 
+# The same plug as `poweredBy`, built with `Plug.around` instead of the
+# nested closure form.
+poweredByAround : Rodolfo.Plug
+let poweredByAround = Plug.around do |inner, env|
+  match inner(env) do
+    Response.Text { status, body, headers } =>
+      Response.Text { status: status, body: body, headers: headers.add("X-Powered-By", "Rodolfo").or(headers) }
+    reply => reply
+  end
+end
+
 # Records which plug ran, in call order, so ordering can be asserted on.
 marked : String -> Rodolfo.Plug
 let marked(tag) = do |inner|
@@ -514,6 +537,18 @@ describe("Rodolfo composes plugs") do
   it("wraps every route in the router with a global plug") do
     let api = Rodolfo.router do
       plug(poweredBy)
+      get "/" do |_| Response.Text { body: "hi" } end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/")
+    teardown(state)
+
+    Assert.equal(header(response, "X-Powered-By"), Just("Rodolfo"))
+  end
+
+  it("builds an equivalent plug with Plug.around, a single two-argument block") do
+    let api = Rodolfo.router do
+      plug(poweredByAround)
       get "/" do |_| Response.Text { body: "hi" } end
     end
     let state = boot(api)
