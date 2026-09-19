@@ -1,0 +1,89 @@
+# The two pages are pure functions of what the request carried, so what they
+# escape and what they say is checked here rather than in a browser. Escaping
+# itself is Rodolfo's — `spec/rodolfo.spec.kex` in the main checkout covers
+# `escape`, `html$` and `rawHTML$`; what these cases prove is that the chat
+# page reaches for it on every hole a stranger can fill, including the two
+# that land inside `<script>` and have to survive as JavaScript, not HTML.
+using Chat.Views
+
+# A page as text, which is what an assertion reads.
+let asText(page: Rodolfo.Safe) -> String = "${page}"
+
+describe("Chat.Views.login") do
+  it("asks for a room password and a name") do
+    let page = asText(Chat.Views.login(""))
+    assert(page.contains?("<input name=\"token\" type=\"password\""))
+    assert(page.contains?("<input name=\"name\">"))
+    assert(page.contains?("<form method=\"get\" action=\"/\">"))
+  end
+
+  it("wraps the form in a complete document") do
+    let page = asText(Chat.Views.login(""))
+    assert(page.contains?("<!doctype html>"))
+    assert(page.contains?("<title>Rodolfo Chat</title>"))
+  end
+
+  it("says nothing about an error on a first visit") do
+    assert(asText(Chat.Views.login("")).contains?("class=\"error\"").falsy?)
+  end
+
+  it("shows the reason a previous attempt failed") do
+    assert(asText(Chat.Views.login("Wrong password.")).contains?("<p class=\"error\">Wrong password.</p>"))
+  end
+
+  it("escapes an error carrying a name that looks like markup") do
+    let page = asText(Chat.Views.login("\"<script>alert('x')</script>\" is already in the room."))
+    assert(page.contains?("&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;"))
+    assert(page.contains?("<script>alert").falsy?)
+  end
+
+  it("passes the stylesheet through unescaped") do
+    assert(asText(Chat.Views.login("")).contains?("<style>"))
+  end
+end
+
+describe("Chat.Views.chat") do
+  it("names who you are chatting as, and gives the page its furniture") do
+    let page = asText(Chat.Views.chat("Ada", "/chat?token=t&name=Ada"))
+    assert(page.contains?("Chatting as <strong>Ada</strong>"))
+    assert(page.contains?("<div id=\"log\">"))
+    assert(page.contains?("<ul id=\"roster-list\">"))
+    assert(page.contains?("<form id=\"composer\">"))
+  end
+
+  it("escapes a name that looks like markup where it renders as HTML") do
+    let page = asText(Chat.Views.chat("<img src=x onerror=alert(1)>", "/chat?token=t"))
+    assert(page.contains?("&lt;img src=x onerror=alert(1)&gt;"))
+    assert(page.contains?("<img src=x").falsy?)
+  end
+
+  # The two holes inside `<script>` are JSON, not HTML: they have to come out
+  # as JavaScript string literals with their quotes intact, which is why the
+  # view hands them to `safe` instead of escaping them a second time.
+  it("hands the socket path to the script as a real JS string literal") do
+    let page = asText(Chat.Views.chat("Ada", "/chat?token=let-me-in&name=Ada"))
+    assert(page.contains?("var path = \"/chat?token=let-me-in&name=Ada\";"))
+    assert(page.contains?("&quot;/chat").falsy?)
+  end
+
+  it("hands the name to the script the same way") do
+    assert(asText(Chat.Views.chat("Ada", "/chat")).contains?("var myName = \"Ada\";"))
+  end
+
+  it("does not let a name close the script element") do
+    let page = asText(Chat.Views.chat("</script><script>alert(1)//", "/chat"))
+    assert(page.contains?("<script>alert(1)").falsy?)
+  end
+
+  it("does not let a name break out of its JS string literal") do
+    let page = asText(Chat.Views.chat("\" + alert(1) + \"", "/chat"))
+    assert(page.contains?("var myName = \"\" + alert(1) + \"\";").falsy?)
+    assert(page.contains?("\\\" + alert(1) + \\\""))
+  end
+
+  it("dispatches the three line shapes the room broadcasts") do
+    let page = asText(Chat.Views.chat("Ada", "/chat"))
+    assert(page.contains?("event.data.indexOf(\"$users:\") === 0"))
+    assert(page.contains?("event.data.indexOf(\"* \") === 0"))
+  end
+end

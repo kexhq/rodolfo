@@ -336,7 +336,10 @@ PORT=4000 LIBRARY_FILE=/tmp/books.tsv tey run
 ```
 
 `tey test` in an example runs its `spec/` directory: `examples/library` has
-specs for its pure catalogue rules, its pages' escaping, and its file store.
+specs for its pure catalogue rules, its pages' escaping, and its file store,
+and `examples/chat` for its broadcast wire format and both of its pages,
+including what a display name may not do once it reaches the page's own
+`<script>`.
 
 ## Develop
 

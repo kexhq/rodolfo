@@ -45,12 +45,40 @@ then `tey install` again.
 | --- | --- |
 | `src/main.kex` | the room password, the `serving Room` connection registry, and the routes |
 | `src/chat/views.kex` | the login form and the chat page (module `Chat.Views`), escaped through Rodolfo's markup tags |
+| `src/chat/protocol.kex` | the three line shapes the room and the browser agree on (module `Chat.Protocol`) |
+| `spec/` | those two, checked without a server: `tey test` |
 
 Both `Chat.Views` and `examples/library`'s own `Library.Views` are
 namespaced to the example they belong to on purpose: `tey` resolves the
 workspace `rodolfo` dependency by pulling in every sibling example under
 `examples/*`, so a bare `module Views` in more than one of them collides —
 see `docs/kex-issues.md` #26.
+
+## Specs
+
+```sh
+tey test
+```
+
+Everything a spec can reach here is a pure function of what a request
+carried, so that is what they cover: the wire format in `Chat.Protocol`, and
+what the two pages escape. The chat page is the interesting half — a display
+name is nothing but a query parameter, so it has to survive being rendered as
+HTML *and* being handed to the page's own `<script>` as a JavaScript string
+literal, which is two different escapes on the same stranger's text.
+
+The routes and the `serving Room` registry are not covered: both live in the
+entrypoint module (see the note above `Room` in `src/main.kex`), and what
+they do — broadcasting to sockets that are only real once a server is
+running — is checked against a live server instead.
+
+## Idle connections
+
+A client that says nothing still stays in the room. That is worth naming
+because it did not used to: `receiveMessage` answers its own 31-second call
+timeout, and reading that as a disconnect hung up on anyone who hadn't typed
+in half a minute. `src/main.kex` tells a `Timeout` apart from a real close
+and keeps waiting — see `docs/kex-issues.md` #28 in the main checkout.
 
 ## How the password and name travel
 

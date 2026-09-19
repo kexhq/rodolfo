@@ -87,6 +87,13 @@ let login(error) do
   `
 end
 
+# A JS string literal for a `<script>` hole: JSON, with the two characters
+# that could end the element escaped the way JavaScript, not HTML, spells
+# them. `\u003C` and `\u003E` are `<` and `>` to every JS engine, and are
+# inert to an HTML parser looking for `</script`.
+jsLiteral : String -> Safe
+let jsLiteral(value) = safe(JSON.stringify(value).replace("<", "\\u003C").replace(">", "\\u003E"))
+
 # The chat page itself: a name already checked against the room password,
 # so all it has to do is open the WebSocket at `socketPath` (already the
 # encoded "/chat?token=...&name=..." this connection should use).
@@ -96,11 +103,19 @@ let chat(name, socketPath) do
   # real JS string literal (JSON.stringify quotes and escapes it), and then
   # that literal must not itself be HTML-escaped the way an ordinary hole
   # would be, or the quotes JSON.stringify added turn into `&quot;` and
-  # break the JS. `safe` opts back out for exactly this one hole; `name` a
-  # few lines up stays a plain hole, escaped as normal, since it renders as
+  # break the JS. `safe` opts back out for exactly this one hole; `name`
+  # further down stays a plain hole, escaped as normal, since it renders as
   # HTML there.
-  let jsPath = safe(JSON.stringify(socketPath))
-  let jsName = safe(JSON.stringify(name))
+  #
+  # `jsLiteral` is what makes opting out safe. JSON is not JavaScript-in-HTML:
+  # `JSON.stringify` has no reason to touch `<`, so a display name of
+  # `</script><script>alert(1)//` — which a link can hand a stranger, since
+  # the name is nothing but a query parameter — comes back as a JSON string
+  # that closes this very element and opens an attacker's. Rewriting `<` and
+  # `>` as the `\uXXXX` escapes JavaScript reads back as the same characters
+  # keeps the literal a literal, whatever it carries.
+  let jsPath = jsLiteral(socketPath)
+  let jsName = jsLiteral(name)
   let script = rawHTML$`
     <script>
       (function () {

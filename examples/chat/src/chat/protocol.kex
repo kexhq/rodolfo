@@ -1,0 +1,44 @@
+# The three line shapes the room and the browser agree on.
+#
+# Everything the server pushes travels over the one WebSocket as text, so the
+# page's own JS tells the three apart by their prefix — see `views.kex`'s
+# `socket.onmessage`, which dispatches to `updateRoster`, `appendSystem` or
+# `appendMessage` on exactly the prefixes written here. They are in their own
+# module, rather than inline in the entrypoint, so that agreement is stated
+# once and can be checked without a running server (`spec/protocol.spec.kex`).
+#
+# Named `Chat.Protocol`, not a bare `Protocol`, for the reason `Chat.Views` is
+# named the way it is: `tey` builds every sibling example in the workspace, so
+# a bare top-level module name collides — see docs/kex-issues.md #26.
+module Chat.Protocol
+
+# Who is in the room now — the whole roster every time, not a diff.
+#
+# @param names [[String]] every name currently joined
+# @return [String] the `$users:` line to broadcast
+#
+# @example
+#   Chat.Protocol.rosterLine(["Ada", "Bob"])   # => "$users:Ada,Bob"
+rosterLine : [String] -> String
+let rosterLine(names) = "$users:${names.join(",")}"
+
+# Something that happened to the room rather than something a person said.
+#
+# @param text [String] the event, in prose
+# @return [String] the `* ` line to broadcast
+#
+# @example
+#   Chat.Protocol.systemLine("Ada joined")   # => "* Ada joined"
+systemLine : String -> String
+let systemLine(text) = "* ${text}"
+
+# Something a person said, attributed to them.
+#
+# @param name [String] the sender's display name
+# @param text [String] what they typed
+# @return [String] the `name: text` line to broadcast
+#
+# @example
+#   Chat.Protocol.chatLine("Ada", "hello")   # => "Ada: hello"
+chatLine : String -> String -> String
+let chatLine(name, text) = "${name}: ${text}"
