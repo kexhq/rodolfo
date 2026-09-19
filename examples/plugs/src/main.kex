@@ -6,24 +6,23 @@ using Rodolfo
 
 # An around-style plug: runs before calling the handler it wraps, and after.
 # It never inspects the reply's shape, so it works unchanged for a bare
-# String, JSON, HTML, or anything else a route returns.
+# String, JSON, HTML, or anything else a route returns. Built with
+# `Plug.around`'s single two-argument block (`inner`, `env`) rather than the
+# nested-closure form `Plug`'s own shape (`Handler -> Handler`) otherwise
+# needs — either works, this one's just shorter.
 logged : Rodolfo.Plug
-let logged = do |inner|
-  do |env|
-    let method = env.request.method
-    let path = env.request.target.source
-    IO.printLine("--> ${method} ${path}")
-    let reply = inner(env)
-    IO.printLine("<-- ${method} ${path}")
-    reply
-  end
+let logged = Plug.around do |inner, env|
+  let method = env.request.method
+  let path = env.request.target.source
+  IO.printLine("--> ${method} ${path}")
+  let reply = inner(env)
+  IO.printLine("<-- ${method} ${path}")
+  reply
 end
 
 # A plug that changes the reply on the way back out — the "after" half of
 # around-style, without a "before" half. Only `Response.Text` carries the
-# header onward; everything else passes through unchanged. Built with
-# `Plug.around`'s single two-argument block rather than the nested-closure
-# form `logged` above uses — either is fine, this is just the shorter one.
+# header onward; everything else passes through unchanged.
 poweredBy : Rodolfo.Plug
 let poweredBy = Plug.around do |inner, env|
   match inner(env) do
@@ -42,13 +41,11 @@ end
 # never calling `inner` — there is no separate "stop" signal to thread
 # through.
 requireToken : String -> Rodolfo.Plug
-let requireToken(expected) = do |inner|
-  do |env|
-    if env.query("token") == Just(expected)
-      inner(env)
-    else
-      Response.Text { status: 401, body: "missing or wrong token" }
-    end
+let requireToken(expected) = Plug.around do |inner, env|
+  if env.query("token") == Just(expected)
+    inner(env)
+  else
+    Response.Text { status: 401, body: "missing or wrong token" }
   end
 end
 

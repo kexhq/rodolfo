@@ -58,7 +58,7 @@ then `tey install` again.
 | `src/catalog/books.kex` | the catalogue operations on `[Book]`, and the tab-separated file format |
 | `src/catalog/draft.kex` | form input as it arrives — three untrusted strings — and `validate` |
 | `src/shelf.kex` | moving the catalogue to and from the disk between requests |
-| `src/views.kex` | every page, escaped through Rodolfo's markup tags |
+| `src/library/views.kex` | every page (module `Library.Views`), escaped through Rodolfo's markup tags |
 | `src/mock_data.kex` | the catalogue a fresh install starts from |
 
 `spec/` holds one spec file per module; `tey test` runs them. The catalogue's

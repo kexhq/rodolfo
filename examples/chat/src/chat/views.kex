@@ -6,7 +6,13 @@
 # kexhq/kex#379 (filed from exactly this) and docs/kex-issues.md. Worth
 # retrying once that's fixed; `html$` works today and produces the same
 # escaping guarantees `Template.html` would.
-module Views
+#
+# Named `Chat.Views`, not the bare `Views` every other example uses: `tey`
+# resolves the workspace `rodolfo` dependency by pulling in every sibling
+# example under `examples/*`, so a bare `module Views` here collides with
+# `examples/library`'s own — "warning: shadowed module definition for
+# Views" — and one of the two silently loses.
+module Chat.Views
 
 using JSON
 using Rodolfo, only: [Safe, html, rawHTML, safe]
@@ -38,7 +44,7 @@ let style = html$`
 # didn't reach the chat page, if there was one; an empty string means none.
 login : String -> Safe
 let login(error) do
-  let notice = error.empty? then safe("") else html$`<p class="error"><%= error %></p>`
+  let notice = error.empty? then safe("") else html$`<p class="error">${error}</p>`
   html$`
     <!doctype html>
     <html>
