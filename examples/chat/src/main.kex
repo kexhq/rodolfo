@@ -6,16 +6,18 @@
 #
 # Run this, then open http://localhost:3000/ in two or more browser tabs (or
 # two different browsers) — enter "let-me-in" as the room password and a
-# different name in each, and chat between them.
+# different name in each, and chat between them. The two pages themselves
+# live in `views.kex` and `views/*.html.ket` — see there for how they're
+# built.
 #
 # `Room` is declared right here in the entrypoint module on purpose — a
 # `serving` process whose slots are called from a route handler only works
 # reliably when the `serving` block sits in the entrypoint, not an imported
 # module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
-using JSON
 using Rodolfo
 using URI, only: [Form]
 using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
+using Views
 
 # Deliberately simple: one shared password for the whole room, checked
 # against a query parameter on both the login page and the WebSocket URL
@@ -44,79 +46,6 @@ serving Room do
   end
 end
 
-# The password-and-name form. `error` carries the reason a previous attempt
-# didn't reach the chat page, if there was one.
-let loginPage(error: String?) -> String do
-  let notice = match error do
-    Just(text) => html$`<p style="color:#b00">${text}</p>`
-    None => safe("")
-  end
-  "${html$`
-    <!doctype html>
-    <html>
-      <head><title>Rodolfo Chat</title></head>
-      <body>
-        <h1>Join the chat</h1>
-        ${notice}
-        <form method="get" action="/">
-          <p><label>Room password <input name="token" type="password"></label></p>
-          <p><label>Your name <input name="name"></label></p>
-          <button type="submit">Join</button>
-        </form>
-      </body>
-    </html>
-  `}"
-end
-
-# The chat page itself: a name already checked against `roomToken`, so all
-# it has to do is open the WebSocket with the same credentials attached.
-let chatPage(name: String) -> String do
-  let query = Form.from([("token", roomToken), ("name", name)]).encode
-  let socketUrl = safe(JSON.stringify("/chat?${query}"))
-  "${html$`
-    <!doctype html>
-    <html>
-      <head><title>Rodolfo Chat</title></head>
-      <body>
-        <h1>Rodolfo Chat</h1>
-        <p>Chatting as <strong>${name}</strong></p>
-        <div id="log" style="border:1px solid #ccc; height:300px; overflow-y:auto; padding:8px; margin-bottom:8px;"></div>
-        <form id="composer">
-          <input id="text" autocomplete="off" placeholder="Say something...">
-          <button type="submit">Send</button>
-        </form>
-        <script>
-          (function () {
-            var log = document.getElementById("log");
-            var path = ${socketUrl};
-            var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path;
-            var socket = new WebSocket(url);
-
-            function append(text) {
-              var line = document.createElement("div");
-              line.textContent = text;
-              log.appendChild(line);
-              log.scrollTop = log.scrollHeight;
-            }
-
-            socket.onmessage = function (event) { append(event.data); };
-            socket.onclose = function () { append("[disconnected]"); };
-
-            document.getElementById("composer").addEventListener("submit", function (event) {
-              event.preventDefault();
-              var input = document.getElementById("text");
-              if (input.value.trim() !== "") {
-                socket.send(input.value);
-                input.value = "";
-              }
-            });
-          })();
-        </script>
-      </body>
-    </html>
-  `}"
-end
-
 main do
   let room = Process.spawn(Room {})
 
@@ -126,9 +55,10 @@ main do
       let name = env.query("name").or("").trim
       let attempted = !token.empty? || !name.empty?
       if !token.empty? && token == roomToken && !name.empty?
-        Response.HTML { body: chatPage(name) }
+        let query = Form.from([("token", roomToken), ("name", name)]).encode
+        Response.HTML { body: "${Views.chat(name, "/chat?${query}")}" }
       else
-        Response.HTML { body: loginPage(attempted then Just("Wrong password, or a name is needed.") else None) }
+        Response.HTML { body: "${Views.login(attempted then "Wrong password, or a name is needed." else "")}" }
       end
     end
 
