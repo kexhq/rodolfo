@@ -26,7 +26,9 @@ end
 
 `router` collects the declarations; nothing binds a socket until you `start`
 it. `get`, `post`, `put`, `patch`, `delete`, `head`, and `options` are plain
-functions, and `route "METHOD", path` declares anything else.
+functions, and `route "METHOD", path` declares anything else. A route block
+that never needs the request can drop the parameter entirely — `get "/" do
+"Hello from Kex!" end` — no `|_|` required.
 
 ## Installing as a `Tey` package
 
@@ -127,6 +129,21 @@ end
 `inner` is the handler (or the next plug in) being wrapped. Calling it and
 using the result — as above — is an *around*-style plug: code can run before
 `inner`, after it, or both, which is also how a request-logging plug looks.
+`Plug.around` builds the same plug from one two-argument block instead of
+the nested closures — still a closure literal, so it's exactly as safe with
+respect to #21 as the form above:
+
+```rb
+poweredBy : Rodolfo.Plug
+let poweredBy = Plug.around do |inner, env|
+  match inner(env) do
+    Response.Text { status, body, headers } =>
+      Response.Text { status: status, body: body, headers: headers.add("X-Powered-By", "Rodolfo").or(headers) }
+    reply => reply
+  end
+end
+```
+
 Not calling `inner` at all is how a plug halts a request:
 
 ```rb

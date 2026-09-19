@@ -21,19 +21,19 @@ end
 
 # A plug that changes the reply on the way back out — the "after" half of
 # around-style, without a "before" half. Only `Response.Text` carries the
-# header onward; everything else passes through unchanged.
+# header onward; everything else passes through unchanged. Built with
+# `Plug.around`'s single two-argument block rather than the nested-closure
+# form `logged` above uses — either is fine, this is just the shorter one.
 poweredBy : Rodolfo.Plug
-let poweredBy = do |inner|
-  do |env|
-    match inner(env) do
-      Response.Text { status, body, headers } =>
-        Response.Text {
-          status: status,
-          body: body,
-          headers: headers.add("X-Powered-By", "Rodolfo").or(headers)
-        }
-      reply => reply
-    end
+let poweredBy = Plug.around do |inner, env|
+  match inner(env) do
+    Response.Text { status, body, headers } =>
+      Response.Text {
+        status: status,
+        body: body,
+        headers: headers.add("X-Powered-By", "Rodolfo").or(headers)
+      }
+    reply => reply
   end
 end
 
