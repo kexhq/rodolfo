@@ -33,6 +33,26 @@ WebSocket idle-push bug — re-verified with its own repro, now answers in
 ~3s instead of hanging ~30s and failing), kexhq/kex#343, kexhq/kex#337, and
 kexhq/kex#90, none of which Rodolfo ever had a workaround for.
 
+Checked every remaining workaround still active in `src/rodolfo.kex` and
+`examples/library` against this build, to answer "is anything left to
+migrate" directly rather than just re-testing the last few findings:
+
+- **#1/#2 (serving + Net.HTTP) still both block**, confirmed with Rodolfo's
+  actual shape (`using Rodolfo` in the entrypoint, not a narrower stand-in) —
+  see #2's own entry for the correction; a synthetic test that looked fixed
+  at first turned out not to represent the real import surface.
+  `examples/library`'s tab-separated-file catalogue stays.
+- **#21 still blocks**, in a new, narrower shape now that #366 landed — see
+  its own entry and the new kexhq/kex#375. Plugs stay closure literals.
+- **#5's `set`-fine-name-and-arity finding is moot for current code**: no
+  Rodolfo code has called `.set` since the module structure this repo tracks
+  today; the entry stays for the record but names no live workaround.
+- **#16 confirmed unaffected** either way, as its own entry already said —
+  no Rodolfo code performs unannotated constant arithmetic.
+- Every other numbered entry with a migration to make (#4, #6, #7, #8, #9,
+  #13, #14, #15, #17, #18, #22) has already had its workaround removed in
+  past sessions; #3, #10, #11, #12, #19 never left one in code to remove.
+
 ## Re-verified 2026-09-17, against `kex 0.4.0-beta.3 (3ee1b81)`
 
 `../kex` moved from `293a0b5` to `main`'s tip (`3ee1b81`), pulling in `304b92f`
@@ -277,6 +297,19 @@ Kex-level workaround, so `examples/library` keeps its catalogue in a
 tab-separated file (`src/shelf.kex`) instead of in a process.
 
 ### 2. `serving` declared in an imported module never resolves
+
+**Still reproduces** on `main` (`b913dac`, 2026-09-19) for Rodolfo's actual
+shape — `using Rodolfo` in the entrypoint, a `serving` block in a plain
+imported module that itself touches nothing HTTP-related, called from a
+route handler. A narrower synthetic version (`using Net.HTTP, only:
+[Headers]` in the entrypoint instead of `using Rodolfo`) now works, which
+looked like progress at first — but swapping in the real import brings back
+the identical `'function not exported'` crash, matching this entry's own
+note that the trigger is the dependency's *presence* in the compilation
+unit, not any specific use of it, and #23's established pattern that this
+class of defect is fragile and depends on what else is compiled alongside
+it. `examples/library`'s tab-separated-file workaround is unaffected and
+stays.
 
 **Still reproduces** on `331cbb5`, but much narrower, and the failure has
 changed shape. A `serving` block in an imported module now works on its own —
@@ -893,14 +926,20 @@ requires, not to route around a defect.
 
 ### 21. A named function passed as a value loses its type — or its body — when the function returns another function
 
-**Still reproduces**, in a third shape — re-verified 2026-09-17 against `kex
-0.4.0-beta.3 (3ee1b81)`; see the dated entry above. `304b92f` ("Fix curried
-typing info") fixed curried-result-type printing and bare-reference typing
-but not the arity-declaration check, which still misreads a parenthesized
-`(A -> B) -> (C -> D)` signature. Workaround unchanged: a plug stays a
-closure literal, never a named function passed by name or by `~`. This
-narrower case is now tracked as its own issue, kexhq/kex#366 — #350 was left
-closed for exactly this handoff (see its closing comment, quoted below).
+**Still reproduces**, in a fourth shape — re-verified 2026-09-19 against
+`kex main` (`b913dac`), which includes kexhq/kex#366's fix. The explicit,
+alias-free signature (`(Context -> Reply) -> (Context -> Reply)`) now
+type-checks and runs correctly, confirming #366 really did fix the
+parenthesized-arrow-counting bug. But Rodolfo's `Plug`/`Handler` are `type`
+aliases (`type Handler = Context -> Reply; type Plug = Handler -> Handler`),
+and the exact same annotation spelled through those aliases still hits the
+identical "declares 0 parameter(s) but definition has 1" warning followed by
+a type error — the checker doesn't resolve an alias to its arrow shape before
+counting. Filed as its own issue, kexhq/kex#375, with a minimal alias-only
+repro (`type Fn = Integer -> Integer; type Wrap = Fn -> Fn`, no Rodolfo
+involved). Workaround unchanged: a plug stays a closure literal — spelling
+out `Plug`'s full expansion in every plug's annotation to dodge this would
+defeat the point of the alias existing at all.
 
 Filed upstream as kexhq/kex#350. **Partially retracted** — the primary
 repro below (`addPair`/`check`) was never a real bug: `addPair`'s honest
