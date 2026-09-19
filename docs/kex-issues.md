@@ -443,11 +443,45 @@ piece with a modest amount of real content still risks tipping past 2000ms
 on its own, as the 220-byte data point shows.
 
 Workaround: `examples/chat`'s two pages are Rodolfo `html$`/`rawHTML$`
-tagged literals in `views.kex` instead — same visual result, same escaping
-guarantees, compiles instantly since it never goes through the interpreted
-scanner. Worth retrying `.ket` once kexhq/kex#379 is fixed; the views are
-already isolated in their own file, so switching back later is a
+tagged literals in `chat/views.kex` instead — same visual result, same
+escaping guarantees, compiles instantly since it never goes through the
+interpreted scanner. Worth retrying `.ket` once kexhq/kex#379 is fixed; the
+views are already isolated in their own file, so switching back later is a
 contained change.
+
+### 26. Every example needs a namespaced top-level module name — `tey` builds the whole workspace, not just the package you asked for
+
+Found 2026-09-19 running `tey build`/`tey run` inside `examples/chat`
+specifically (not from the workspace root): `tey`'s own resolution of the
+workspace `rodolfo` dependency pulls in every sibling example under
+`examples/*`, not just the one package actually being built. `warning:
+shadowed module definition for Views: examples/library/src/views.kex`
+surfaced because `examples/chat` had *also* declared a plain `module
+Views` — the two collided, one silently lost, and the loser's functions
+became undefined at the call sites that needed them: a wrong password
+literally rendered the template source (`<%= error %>`, from unrelated
+copy-paste — see below) rather than the error text, and a *correct* login
+crashed with a bare `Internal Server Error` reaching the chat page, since
+the `Views.chat`/`Views.login` calls resolved to whichever module won and
+that module has no such functions.
+
+Every module `.kex` file's declared name has to be unique across the
+*entire* workspace, not just within the package that declares it — a bare
+`module Views`, `module Config`, anything a second example might also
+reach for, is a latent collision waiting for a sibling example to pick the
+same name. Fixed by namespacing every example's own module names to the
+example itself: `examples/chat`'s `Views` became `Chat.Views` (moved to
+`chat/views.kex`, since a nested module name has to live at a matching
+path — `chat/views.kex`, not `views.kex`, the same convention
+`examples/library`'s own `catalog/book.kex` already follows for
+`Catalog.Book`), and `examples/library`'s own `Views` became
+`Library.Views` for the same reason, even though it was there first —
+belt and suspenders against the next example that wants a `Views` too.
+
+Separately, but found at the same time: `<%= error %>` (ERB syntax, from
+when this file was still a `.ket` template attempt — see #25) was left in
+one `html$` literal instead of being converted to `${error}`; a real bug
+of my own, unrelated to the module collision, fixed alongside it.
 
 ### 3. `tey install` refuses the toolchain it needs
 

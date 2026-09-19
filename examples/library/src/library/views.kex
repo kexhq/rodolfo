@@ -5,7 +5,7 @@
 # `Safe` — markup that a further `html$` passes through untouched. So the
 # templates below nest without a wrapper, and a book title can never become
 # markup unless this module says so.
-module Views
+module Library.Views
 
 using Catalog.Book, only: [Book]
 using Catalog.Draft, only: [Draft]
@@ -20,7 +20,7 @@ let page(title, body) do
         <meta charset='utf-8'>
         <meta name='viewport' content='width=device-width, initial-scale=1'>
         <title>${title} · Rodolfo Library</title>
-        <style>${rawHTML$`${Views.stylesheet}`}</style>
+        <style>${rawHTML$`${Library.Views.stylesheet}`}</style>
       </head>
       <body>
         <header>

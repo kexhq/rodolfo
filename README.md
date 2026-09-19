@@ -148,13 +148,11 @@ Not calling `inner` at all is how a plug halts a request:
 
 ```rb
 requireToken : String -> Rodolfo.Plug
-let requireToken(expected) = do |inner|
-  do |env|
-    if env.query("token") == Just(expected)
-      inner(env)
-    else
-      Response.Text { status: 401, body: "missing or wrong token" }
-    end
+let requireToken(expected) = Plug.around do |inner, env|
+  if env.query("token") == Just(expected)
+    inner(env)
+  else
+    Response.Text { status: 401, body: "missing or wrong token" }
   end
 end
 ```

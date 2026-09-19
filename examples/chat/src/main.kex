@@ -17,7 +17,7 @@
 using Rodolfo
 using URI, only: [Form]
 using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
-using Views
+using Chat.Views
 
 # Deliberately simple: one shared password for the whole room, checked
 # against a query parameter on both the login page and the WebSocket URL
@@ -56,9 +56,9 @@ main do
       let attempted = !token.empty? || !name.empty?
       if !token.empty? && token == roomToken && !name.empty?
         let query = Form.from([("token", roomToken), ("name", name)]).encode
-        Response.HTML { body: "${Views.chat(name, "/chat?${query}")}" }
+        Response.HTML { body: "${Chat.Views.chat(name, "/chat?${query}")}" }
       else
-        Response.HTML { body: "${Views.login(attempted then "Wrong password, or a name is needed." else "")}" }
+        Response.HTML { body: "${Chat.Views.login(attempted then "Wrong password, or a name is needed." else "")}" }
       end
     end
 
