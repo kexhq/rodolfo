@@ -363,6 +363,19 @@ entries for the DSL support this depends on. Nothing in `src/rodolfo.kex`
 needed migrating for this fix itself (there was no workaround, only the
 reverted example); a real `examples/chat` is now buildable.
 
+2026-09-19, second pass: the first `examples/chat` only proved the fix — a
+plain-text prompt, no real interface. `ws`'s own signature grew a `Context`
+parameter (`type SocketHandler = Connection -> Void` became `Context ->
+Connection -> Void`) so a handler can read the query string the handshake
+request carried, which a `ws` route needs for anything beyond an anonymous
+echo: a display name, a room token, anything `WebSocket.upgrade`'s own
+`decide` callback would see if Rodolfo called it directly. `examples/chat`
+now serves a real HTML/JS chat page, a shared room password checked from
+`env.query("token")`, and a distinct display name per connection — verified
+with a live server and real WebSocket clients: a wrong password gets the
+connection closed immediately, and two correctly-authenticated connections
+see each other's joins and messages, correctly attributed by name.
+
 Filed upstream as kexhq/kex#370.
 
 Found on `3ee1b81` (2026-09-18) while building Rodolfo's own `ws` route

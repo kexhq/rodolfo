@@ -1,13 +1,28 @@
-# A broadcast chat room over a single `ws` route: every connected client
-# gets every message anyone sends. Run this, then connect two or more
-# WebSocket clients to ws://localhost:3000/chat and type from either one.
+# A broadcast chat room over a single `ws` route, with a shared room
+# password and a per-connection display name — both passed as query
+# parameters on the WebSocket URL, since a handshake can't carry anything
+# else and Rodolfo's `ws` always accepts the upgrade itself; closing right
+# away is how a `ws` route rejects a connection after the fact.
+#
+# Run this, then open http://localhost:3000/ in two or more browser tabs (or
+# two different browsers) — enter "let-me-in" as the room password and a
+# different name in each, and chat between them.
 #
 # `Room` is declared right here in the entrypoint module on purpose — a
 # `serving` process whose slots are called from a route handler only works
 # reliably when the `serving` block sits in the entrypoint, not an imported
 # module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
+using JSON
 using Rodolfo
+using URI, only: [Form]
 using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
+
+# Deliberately simple: one shared password for the whole room, checked
+# against a query parameter on both the login page and the WebSocket URL
+# itself. Real auth would exchange this for a signed session; this is only
+# meant to show `ws` reading the request it was upgraded from.
+roomToken : String
+let roomToken = "let-me-in"
 
 # The connected sockets. `broadcast` doubles as the only place a dead
 # connection gets noticed: a socket whose `send` fails — the peer closed
@@ -29,26 +44,114 @@ serving Room do
   end
 end
 
+# The password-and-name form. `error` carries the reason a previous attempt
+# didn't reach the chat page, if there was one.
+let loginPage(error: String?) -> String do
+  let notice = match error do
+    Just(text) => html$`<p style="color:#b00">${text}</p>`
+    None => safe("")
+  end
+  "${html$`
+    <!doctype html>
+    <html>
+      <head><title>Rodolfo Chat</title></head>
+      <body>
+        <h1>Join the chat</h1>
+        ${notice}
+        <form method="get" action="/">
+          <p><label>Room password <input name="token" type="password"></label></p>
+          <p><label>Your name <input name="name"></label></p>
+          <button type="submit">Join</button>
+        </form>
+      </body>
+    </html>
+  `}"
+end
+
+# The chat page itself: a name already checked against `roomToken`, so all
+# it has to do is open the WebSocket with the same credentials attached.
+let chatPage(name: String) -> String do
+  let query = Form.from([("token", roomToken), ("name", name)]).encode
+  let socketUrl = safe(JSON.stringify("/chat?${query}"))
+  "${html$`
+    <!doctype html>
+    <html>
+      <head><title>Rodolfo Chat</title></head>
+      <body>
+        <h1>Rodolfo Chat</h1>
+        <p>Chatting as <strong>${name}</strong></p>
+        <div id="log" style="border:1px solid #ccc; height:300px; overflow-y:auto; padding:8px; margin-bottom:8px;"></div>
+        <form id="composer">
+          <input id="text" autocomplete="off" placeholder="Say something...">
+          <button type="submit">Send</button>
+        </form>
+        <script>
+          (function () {
+            var log = document.getElementById("log");
+            var path = ${socketUrl};
+            var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + path;
+            var socket = new WebSocket(url);
+
+            function append(text) {
+              var line = document.createElement("div");
+              line.textContent = text;
+              log.appendChild(line);
+              log.scrollTop = log.scrollHeight;
+            }
+
+            socket.onmessage = function (event) { append(event.data); };
+            socket.onclose = function () { append("[disconnected]"); };
+
+            document.getElementById("composer").addEventListener("submit", function (event) {
+              event.preventDefault();
+              var input = document.getElementById("text");
+              if (input.value.trim() !== "") {
+                socket.send(input.value);
+                input.value = "";
+              }
+            });
+          })();
+        </script>
+      </body>
+    </html>
+  `}"
+end
+
 main do
   let room = Process.spawn(Room {})
 
   let site = Rodolfo.router do
-    get "/" do
-      "Connect a WebSocket client to ws://localhost:3000/chat"
+    get "/" do |env|
+      let token = env.query("token").or("")
+      let name = env.query("name").or("").trim
+      let attempted = !token.empty? || !name.empty?
+      if !token.empty? && token == roomToken && !name.empty?
+        Response.HTML { body: chatPage(name) }
+      else
+        Response.HTML { body: loginPage(attempted then Just("Wrong password, or a name is needed.") else None) }
+      end
     end
 
-    ws "/chat" do |socket|
-      room.join(socket)
-      loop do
-        match socket.receiveMessage.try do
-          Text(text) => room.broadcast(text)
-          CloseMessage(_, _) => break
-          _ => Void
+    ws "/chat" do |env, socket|
+      let token = env.query("token").or("")
+      let name = env.query("name").or("").trim
+      if token != roomToken || name.empty?
+        socket.close
+      else
+        room.join(socket)
+        room.broadcast("* ${name} joined")
+        loop do
+          match socket.receiveMessage.try do
+            Text(text) => room.broadcast("${name}: ${text}")
+            CloseMessage(_, _) => break
+            _ => Void
+          end
         end
+        room.broadcast("* ${name} left")
       end
     end
   end
 
-  IO.printLine("Chat room on ws://localhost:3000/chat")
+  IO.printLine("Chat room on http://localhost:3000/ (room password: ${roomToken})")
   site.start(3000).try
 end
