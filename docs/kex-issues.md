@@ -15,6 +15,92 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-19, against `kex 0.4.0-beta.3 (b913dac)`
+
+`../kex` moved from `3c4152e` to `main`'s tip (`b913dac`, PR #374
+"fix-atoms" and its follow-ups). Checked via a separate `git worktree`
+rather than the shared `../kex` checkout, which had unrelated work in
+progress on its own branch at the time.
+
+**#17 is fixed**, closing kexhq/kex#347 — see its own entry below for the
+migration. This is the significant one: `Rodolfo.respond` is genuine
+multi-clause style again, matching the shape the bug originally forced it
+away from.
+
+Also fixed upstream in this range, neither touching `src/rodolfo.kex`:
+kexhq/kex#366 (re-verified again, still holds), kexhq/kex#370 (the
+WebSocket idle-push bug — re-verified with its own repro, now answers in
+~3s instead of hanging ~30s and failing), kexhq/kex#343, kexhq/kex#337, and
+kexhq/kex#90, none of which Rodolfo ever had a workaround for.
+
+Checked every remaining workaround still active in `src/rodolfo.kex` and
+`examples/library` against this build, to answer "is anything left to
+migrate" directly rather than just re-testing the last few findings:
+
+- **#1/#2 (serving + Net.HTTP) still both block**, confirmed with Rodolfo's
+  actual shape (`using Rodolfo` in the entrypoint, not a narrower stand-in) —
+  see #2's own entry for the correction; a synthetic test that looked fixed
+  at first turned out not to represent the real import surface.
+  `examples/library`'s tab-separated-file catalogue stays.
+- **#21 still blocks**, in a new, narrower shape now that #366 landed — see
+  its own entry and the new kexhq/kex#375. Plugs stay closure literals.
+- **#5's `set`-fine-name-and-arity finding is moot for current code**: no
+  Rodolfo code has called `.set` since the module structure this repo tracks
+  today; the entry stays for the record but names no live workaround.
+- **#16 confirmed unaffected** either way, as its own entry already said —
+  no Rodolfo code performs unannotated constant arithmetic.
+- Every other numbered entry with a migration to make (#4, #6, #7, #8, #9,
+  #13, #14, #15, #17, #18, #22) has already had its workaround removed in
+  past sessions; #3, #10, #11, #12, #19 never left one in code to remove.
+
+## Re-verified 2026-09-17, against `kex 0.4.0-beta.3 (3ee1b81)`
+
+`../kex` moved from `293a0b5` to `main`'s tip (`3ee1b81`), pulling in `304b92f`
+("Fix curried typing info", kexhq/kex#350), `986d28e`/`90120f3`/`cc5c195`
+(already covered below as #20/#22), and `a4f7330` (merged as `kexhq/kex#365`,
+"Fix websocket close issues, add specs", closing kexhq/kex#360 — see #23).
+Built locally with `make build` and re-run the same way as prior entries: a
+standalone repro per item, then the full `spec/rodolfo.spec.kex` (45 examples)
+and `examples/library`'s five spec files (67 examples) through `--source-root`
+against the BEAM backend, plus a `kex -R` smoke test where relevant.
+
+**#18 is fixed** — re-verified with the exact `Definition`/`Flat` repro from
+its own entry, both field-declaration orders, and reading back every field on
+both records (not just the one that happened to work before). All correct on
+this build; no bisection was run to name the exact fixing commit, since
+rebuilding at each candidate commit is expensive and nothing in the visible
+commit range names #18 or kexhq/kex#348 directly. `src/rodolfo.kex` dropped
+the tuple workaround: `Flat` is a real record again (`method`, `path`,
+`plugs`, `handler`), `flattened` returns `[Flat]`, and `compileFlat` pattern-
+matches it directly. Full spec suite (45 + 67 examples) passes unchanged.
+
+**#23 is fixed**, closing kexhq/kex#360 — see its own entry below.
+
+**#21 still reproduces**, in a third shape. Re-ran the exact `plug(~poweredBy)`
+case this entry's "partially retracted" note left open, plus a from-scratch
+minimal repro with no Rodolfo involved at all
+(`mk : (Integer -> Integer) -> (Integer -> Integer)`, called both bare and via
+`~`). Both now fail before ever reaching the "wrong reconstructed type" error
+this entry originally reported: `kex -C` emits a **warning** that the
+annotation "declares 2 parameter(s) but definition has 1" — the arity check
+that produces this warning flattens the parenthesized `(A -> B) -> (C -> D)`
+into a naive arrow count instead of respecting the grouping — and then a real
+type error follows from the same miscount (`` `mk` declared to return Integer
+but body returns T0 -> Integer ``). `304b92f` fixed the two paths it targeted
+(printing a curried result type, and typing a bare function reference used as
+a value) but not this one: the arity-declaration check is evidently a third,
+separate code path over the same signature shape. Net effect for Rodolfo is
+unchanged — a plug still has to be written as a closure literal
+(`let name = do |inner| do |env| ... end end`), never as a named function
+passed by name or by `~`. Nothing in `src/rodolfo.kex` changed for this entry.
+Filed upstream as kexhq/kex#366 (split from #350 at that issue's own request).
+
+**#1/#2 (serving) and #17 (multi-clause abstract-union dispatch) are
+unchanged** — re-run against their own standalone repros, still reproduce
+exactly as described, and no commit in `293a0b5..3ee1b81` touches `serving`,
+process export, or multi-clause lowering. No workaround in `src/rodolfo.kex`
+or `examples/library` changed for either.
+
 ## Re-verified 2026-09-15, against `kex 0.4.0-beta.3 (293a0b5)`
 
 `../kex` moved well past `9ecd0f6` — built locally as `/home/akos/kex/kex/build/kex`.
@@ -113,7 +199,14 @@ entries. Each entry below is marked inline.
 
 ### 20. No server-side WebSocket upgrade — `Net.HTTP.WebSocket` is client-only
 
-Filed upstream as kexhq/kex#345.
+**Fixed** on `cc5c195` (merged via kexhq/kex#355). `WebSocket.upgrade`
+shipped matching the `net-plan.md` sketch quoted below almost exactly —
+confirmed by running kex's own `examples/websocket_chat.kex` against a
+clean, isolated build of `main`: a real `serving`-backed chat session
+answers over an actual upgraded connection, no mocks. Rodolfo route-level
+support (`ws "/path" do |socket| ... end`) is unblocked and, as of
+2026-09-18 and #23's fix, built — see `ws` in `src/rodolfo.kex` and the
+"WebSocket routes" section of `README.md`.
 
 Found on `293a0b5` while scoping WebSocket route support for Rodolfo (the
 kind of thing Sinatra and Kemal both offer, and Rodolfo already borrows its
@@ -170,6 +263,9 @@ is blocked on this landing in Kex first.
 
 ### 1. `serving` slots are not exported once the program depends on `Net.HTTP`
 
+Filed upstream as kexhq/kex#376 (closed on file — already fixed, kept for
+the historical record and as somewhere to reopen from if it regresses).
+
 **Fixed** on `331cbb5`. The exact repro the `5a088fe` note describes — a bare
 `serving Counter do ... end` in the entrypoint, `using Net.HTTP, only:
 [Headers]`, and one `foul` function taking a `Server<Counter>` — now runs
@@ -204,6 +300,21 @@ Kex-level workaround, so `examples/library` keeps its catalogue in a
 tab-separated file (`src/shelf.kex`) instead of in a process.
 
 ### 2. `serving` declared in an imported module never resolves
+
+Filed upstream as kexhq/kex#377.
+
+**Still reproduces** on `main` (`b913dac`, 2026-09-19) for Rodolfo's actual
+shape — `using Rodolfo` in the entrypoint, a `serving` block in a plain
+imported module that itself touches nothing HTTP-related, called from a
+route handler. A narrower synthetic version (`using Net.HTTP, only:
+[Headers]` in the entrypoint instead of `using Rodolfo`) now works, which
+looked like progress at first — but swapping in the real import brings back
+the identical `'function not exported'` crash, matching this entry's own
+note that the trigger is the dependency's *presence* in the compilation
+unit, not any specific use of it, and #23's established pattern that this
+class of defect is fragile and depends on what else is compiled alongside
+it. `examples/library`'s tab-separated-file workaround is unaffected and
+stays.
 
 **Still reproduces** on `331cbb5`, but much narrower, and the failure has
 changed shape. A `serving` block in an imported module now works on its own —
@@ -240,6 +351,56 @@ the fallback; the crash is visible in the error report, not the return value.
 This still blocks the shape #1 blocked, so `examples/library` keeps its
 catalogue in a tab-separated file (`src/shelf.kex`) rather than a process: a
 store in its own module is exactly the failing cell.
+
+### 24. A server-side WebSocket `Connection` can't be sent to from another process while it's idle
+
+**Fixed** on `kexhq/kex` `main` (merged as PR #371, "Fix WebSocket server_loop
+blocking its mailbox on an idle client"), closing kexhq/kex#370. Re-verified
+2026-09-19 against `main` @ `b913dac` with the exact repro filed upstream: the
+push now succeeds in ~3s instead of hanging ~30s and reporting the connection
+closed. This unblocks a broadcast chat room example — see #20/#23's own
+entries for the DSL support this depends on. Nothing in `src/rodolfo.kex`
+needed migrating for this fix itself (there was no workaround, only the
+reverted example); a real `examples/chat` is now buildable.
+
+Filed upstream as kexhq/kex#370.
+
+Found on `3ee1b81` (2026-09-18) while building Rodolfo's own `ws` route
+support on top of #23's fix — trying to write a broadcast chat room example:
+a `serving Room` holding every connected `Connection` and pushing to all of
+them whenever any one client sends a message.
+
+A `Connection`, `.send()`-to from a process other than the one running its
+own handler, hangs for ~30s and then reports the connection closed — even
+though the client is still connected and simply hasn't sent anything since
+upgrading. `runtime/src/kex_intrinsic_netwebsocket.erl`'s `server_loop`
+processes a `receive_message` request with a **blocking** `gen_tcp:recv`
+(the module's 30000ms `?TIMEOUT`), during which it cannot service any other
+message in its mailbox — including a `{send, ...}` request queued by another
+process. If the client stays quiet past that window, the recv times out,
+`server_loop` marks itself closed (any transport hiccup, timeout or genuine
+close, is reported with `kind: Closed`), and only then drains its mailbox to
+answer the queued send — with an error, since it now considers itself dead.
+Confirmed with a minimal, Rodolfo-free repro: registering a connection with
+a separate `serving` process and pushing to it from a plain HTTP route takes
+~32.5 wall-clock seconds to fail, matching the internal timeout exactly.
+
+Same-connection request/reply — the handler calling `send`/`receiveMessage`
+on its own connection, including from a per-session `serving` actor it
+spawned itself (see kex's own `examples/websocket_chat.kex`) — is unaffected,
+since that process is never the one stuck in the blocking recv when the send
+happens. It is specifically a *different* process sending to an *idle*
+connection that hits this.
+
+Workaround: none found. This blocks the shape #1/#2 blocked, one level up —
+a single connection's own request/reply loop works fine, but Rodolfo's `ws`
+route can't be used to build anything that pushes to a connection from
+outside its own handler (a broadcast chat room, a shared notification
+channel, pub/sub) reliably, since the target is normally idle exactly when a
+push would matter. An `examples/chat` broadcast demo was built, confirmed
+broken by this, and reverted rather than shipped; `ws`'s own single-connection
+request/reply shape (the "Rodolfo serves WebSocket routes" specs) is
+unaffected and stays in `src/rodolfo.kex`.
 
 ### 3. `tey install` refuses the toolchain it needs
 
@@ -610,6 +771,19 @@ never subtracted under an annotation.
 
 ### 17. Multi-clause functions silently drop clauses when the argument's static type is an abstract union
 
+**Fixed**, closing kexhq/kex#347 — merged 2026-09-19 (`kexhq/kex` `main` @
+`b913dac`, PR #374's "Even more fixes" commit, alongside its own new
+regression spec `spec/multiclause_record_pattern_dispatch.kex`, which mirrors
+this entry's exact `respond`/`dispatchGeneric` shape and passes). Re-verified
+against that build and migrated `src/rodolfo.kex`: `Rodolfo.respond` is genuine
+multi-clause style again — one `let`/`foul respond(...)` declaration per
+`Reply` variant, ending in a catch-all `respond(other: Any, route: String)`
+for #7's "not actually a Reply" case — instead of one function with an
+internal `match`. Full spec suite (48 examples in `spec/rodolfo.spec.kex`,
+including every case that specifically exercises `respond` from inside a
+served request's closure, plus all 67 across `examples/library`) passes
+unchanged.
+
 Filed upstream as kexhq/kex#347.
 
 Found on `293a0b5` while converting `Rodolfo.respond` (this repo's
@@ -677,6 +851,10 @@ through a handler, callback, or process boundary are exactly where that
 tends to happen.
 
 ### 18. Two records in one module sharing a field name corrupts the other's accessor at runtime
+
+**Fixed** — re-verified 2026-09-17 against `kex 0.4.0-beta.3 (3ee1b81)`; see
+the dated entry above for the exact re-test and what changed in
+`src/rodolfo.kex`. kexhq/kex#348 can be closed.
 
 Filed upstream as kexhq/kex#348.
 
@@ -753,7 +931,34 @@ requires, not to route around a defect.
 
 ### 21. A named function passed as a value loses its type — or its body — when the function returns another function
 
-Filed upstream as kexhq/kex#350.
+**Still reproduces**, in a fourth shape — re-verified 2026-09-19 against
+`kex main` (`b913dac`), which includes kexhq/kex#366's fix. The explicit,
+alias-free signature (`(Context -> Reply) -> (Context -> Reply)`) now
+type-checks and runs correctly, confirming #366 really did fix the
+parenthesized-arrow-counting bug. But Rodolfo's `Plug`/`Handler` are `type`
+aliases (`type Handler = Context -> Reply; type Plug = Handler -> Handler`),
+and the exact same annotation spelled through those aliases still hits the
+identical "declares 0 parameter(s) but definition has 1" warning followed by
+a type error — the checker doesn't resolve an alias to its arrow shape before
+counting. Filed as its own issue, kexhq/kex#375, with a minimal alias-only
+repro (`type Fn = Integer -> Integer; type Wrap = Fn -> Fn`, no Rodolfo
+involved). Workaround unchanged: a plug stays a closure literal — spelling
+out `Plug`'s full expansion in every plug's annotation to dodge this would
+defeat the point of the alias existing at all.
+
+Filed upstream as kexhq/kex#350. **Partially retracted** — the primary
+repro below (`addPair`/`check`) was never a real bug: `addPair`'s honest
+type is `Integer -> (Integer -> Integer)`, which never matched what `check`
+wanted, and the current build's error message makes that plain by reporting
+the correct (no longer flattened) structure — `check(addPair)`, no `~` at
+all, fails identically. The `check(~addPair)` half of this entry is
+therefore not evidence of anything. What's still real: `plug(~poweredBy)`,
+where `Handler`'s return type is Rodolfo's actual multi-variant, cross-module
+`Reply`, still fails via `kex -r` (not `-C`) with the type reconstructed as
+`... -> Unknown`. A same-shaped same-module 3-variant union does not
+reproduce, so the trigger is narrower than "curried functions" — something
+about a cross-module and/or larger union specifically, not isolated further.
+Re-verified on `cc5c195`; see the correction comment on kexhq/kex#350.
 
 Found on `293a0b5` while answering "why can't a plug be a normal `let
 name(inner) = ...` function instead of a `do |inner| do |env| ... end end`
@@ -810,6 +1015,137 @@ Workaround: write a plug as a value — `let name = do |inner| do |env| ...
 end end` — never as a named function passed by name or by `~`. A closure
 literal is never routed through either broken path. See the `Plug` type's
 doc comment in `src/rodolfo.kex` for the full shape and rationale.
+
+### 22. A block can't ignore a parameter it doesn't need — `|_|` (or a named, unused binding) is mandatory everywhere
+
+**Fixed** on `cc5c195` (merged via kexhq/kex#359). Re-verified directly:
+`3.times do IO.printLine("hi") end` now runs with no `|_|`. `|_|` is no
+longer required anywhere in Rodolfo's own examples or docs, but nothing
+needed migrating — it was never wrong to keep writing it, just no longer
+mandatory, so the existing `|_|`-carrying examples stay as-is.
+
+Filed upstream as kexhq/kex#354.
+
+Found on `293a0b5` while asking "does a Rodolfo route handler need to bind
+the request context it never uses?" There is no way to write a
+zero-parameter block and have it satisfy a function type expecting one
+argument — the missing parameter is never implicitly discarded, no matter
+how obviously unused it would be. Not a `Handler`/Rodolfo quirk: the same
+failure hits the stdlib's own block-taking functions.
+
+```kex
+[1, 2, 3].each do
+  IO.printLine("tick")
+end
+# error: `each` expects argument 2 to be A -> Void, but got () -> Void
+
+3.times do
+  IO.printLine("hi")
+end
+# error: `times` expects argument 2 to be Integer -> Void, but got () -> Void
+
+get "/" do
+  "Hello from Kex!"
+end
+# error: `get` expects argument 2 to be Context -> Reply, but got () -> String
+```
+
+All three work with an explicit discard — `.each do |_| ... end`, `.times do
+|_| ... end`, `get "/" do |_| ... end` — which is exactly why `src/rodolfo.kex`
+and `README.md`'s examples all write `|_|` even where the value is never
+used. `Integer#times` is the sharpest case: the index is routinely
+irrelevant ("do this 3 times"), so this isn't a stretched edge case — it's
+the common one.
+
+An overload at the call-site library level — `get` accepting either
+`Context -> Reply` or `() -> Reply` — looked like a possible workaround, but
+didn't resolve cleanly either (the two candidates didn't unify the way a
+manual dispatch would expect), so this isn't something a caller can paper
+over on their own.
+
+Workaround: none. Every block argument needs an explicit binding for every
+parameter position the function type declares, used or not.
+
+### 23. `Net.Socket` + `Net.HTTP.WebSocket` crash `erlc` — blocks WebSocket routes on a real server
+
+**Fixed** on `a4f7330` (merged via kexhq/kex#365), closing kexhq/kex#360.
+Re-verified 2026-09-17 by running kex's own new regression specs
+(`spec/net_socket_websocket_close_collision_beam.kex` and
+`spec/net_socket_websocket_minimal_beam.kex`) — both pass, including the
+real `close`/`closed?` calls on each colliding type.
+
+2026-09-18: built the `ws "/path" do |socket| ... end` route this and #20
+unblocked — `WsDefinition`, `SocketHandler`, and `ws` in `src/rodolfo.kex`,
+speced in `spec/rodolfo.spec.kex` ("Rodolfo serves WebSocket routes"),
+documented in `README.md`. Two things worth recording from building it:
+
+- `Client.close()` (an existing, working call, unrelated to any of this)
+  gets misreported by `kex -C` as an arity/overload mismatch the moment
+  `Net.HTTP.WebSocket` is anywhere in the compiled program's module graph —
+  merely being compiled in is enough, regardless of which names are
+  `using`-imported from it, or with what `only:`/`except:` list. This is a
+  false positive: `--run` (the real BEAM path) compiles and executes every
+  such call correctly, matching #21's already-established pattern of `-C`
+  and `-r`/`--run` disagreeing over the same program. No workaround needed
+  since nothing is actually broken, but worth knowing `kex -C` on any
+  program using both `Rodolfo` and `Net.HTTP.WebSocket` will show this.
+- `WebSocket.connect` (and, presumably, any function in a module Rodolfo's
+  own code imports but never itself calls) type-checks fine through
+  Rodolfo's re-export but is "Undefined function" at runtime unless the
+  *calling* module also imports `Net.HTTP.WebSocket` itself — the codegen
+  omits an export the entry compilation unit never reaches, the same class
+  of bug as #1/#2 (`serving` slots not exported), just for a plain function.
+  `spec/rodolfo.spec.kex` works around it with its own direct
+  `using Net.HTTP.WebSocket, only: [WebSocket, ...]`, and `README.md`'s
+  example does the same for `Message`'s variants.
+
+Filed upstream as kexhq/kex#360.
+
+Found on `cc5c195` immediately after #20 shipped, trying to build a `ws`
+(WebSocket route) DSL function on top of it — Rodolfo already `using
+Net.Socket` for its ordinary HTTP server, and adding `Net.HTTP.WebSocket`
+crashes `erlc` before any code runs, let alone a `ws` route being hit:
+
+```kex
+using Net.Socket
+using Net.HTTP.WebSocket
+
+main do
+  IO.printLine("compiled fine")
+end
+```
+
+```
+exception error: {key_exists,{b_local,{b_literal,close},2}}
+  in function  gb_trees:insert_1/4 (gb_trees.erl:363)
+  ...
+error: erlc failed
+```
+
+`Net.Socket.TCP` and `Net.HTTP.WebSocket.Connection` each have their own
+`close`/`closed?` methods, and having both in the compiled program's module
+graph collides at the `erlc` SSA pass — the same class as #18, except this
+time both sides are in kex's own stdlib, so there is no name on the
+application side to rename.
+
+Worse than #18: the trigger is fragile and not fixable by adding names to
+scope reliably. Pulling `Net.HTTP`'s `Client` into scope alongside the other
+two imports makes the 7-line repro above compile and run — but the same
+trick, applied to Rodolfo itself (which also touches `Rodolfo.Markup`,
+`Rodolfo.Response`, `URI`, ...), did not: same crash, a different colliding
+name (`closed?` instead of `close`) depending on exactly what else was
+compiled alongside it. And the bug isn't gated on runtime use at all —
+merely *declaring* `ws`/`WsDefinition`/`Socket` types and a `compileWs`
+function in `src/rodolfo.kex`, with no application anywhere declaring an
+actual `ws` route, was enough to crash the entire existing spec suite, none
+of which touches WebSocket.
+
+Workaround: none found. A `ws` DSL function was written, type-checked
+cleanly, and then reverted out of `src/rodolfo.kex` entirely — its presence
+alone breaks the whole framework's build, not just WebSocket-route usage.
+Rodolfo has no WebSocket route support until this is fixed upstream; #20
+being fixed did not unblock it. Same shape as #1/#2: the defect decided the
+architecture, not the other way around.
 
 ## Ctrl+C does not stop a running server
 

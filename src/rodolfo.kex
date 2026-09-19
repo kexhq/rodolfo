@@ -8,7 +8,7 @@
 #
 #   main do
 #     let site = Rodolfo.router do
-#       get "/" do 
+#       get "/" do |_|
 #        "Hello from Kex!"
 #       end
 #
@@ -29,7 +29,12 @@ module Rodolfo
 
 # `Response` below is Rodolfo's own — the reply a route block returns — so
 # Net.HTTP arrives selectively and its response constructors stay qualified.
+# `Message`, `Text`, `BinaryMessage`, and `CloseMessage` stay unimported —
+# `Text` collides with `Response.Text` — so a `ws` handler that pattern
+# matches on messages brings them in itself: `using Net.HTTP.WebSocket, only:
+# [Message, Text, BinaryMessage, CloseMessage]`.
 using Net.HTTP, only: [Request, Context, Headers, Route, Server, ServerOptions]
+using Net.HTTP.WebSocket, only: [WebSocket, Connection, Handshake, Upgrade, Accept, Reject]
 using Net.Socket
 using URI, only: [URI, Form]
 using Rodolfo.Markup
@@ -240,6 +245,17 @@ record Definition do
   handler : Handler
 end
 
+# A WebSocket route block: a live, already-upgraded connection to read from
+# and write to. Everything before the upgrade — the handshake itself, and
+# whether to accept it — is handled for you; see `ws`.
+type SocketHandler = Connection -> Void
+
+# One declaration for a `ws` route in a Rodolfo route list.
+record WsDefinition do
+  path : String
+  handler : SocketHandler
+end
+
 # Wraps a `plug` declaration so it can sit in the same `router do ... end` or
 # `scope do ... end` body as route declarations and nested scopes — see
 # +Entry+.
@@ -256,8 +272,18 @@ record Scope do
 end
 
 # One statement inside a `router do ... end` or `scope do ... end` body: a
-# route, a plug, or a nested scope.
-type Entry = Definition | PlugEntry | Scope
+# route, a WebSocket route, a plug, or a nested scope.
+type Entry = Definition | WsDefinition | PlugEntry | Scope
+
+# A flattened route: a scope tree collapses to one of these per
+# `Definition`, its plug stack accumulated top-down and its path prefixed by
+# every scope it sat inside — see `flattened`.
+record Flat do
+  method : String
+  path : String
+  plugs : [Plug]
+  handler : Handler
+end
 
 # Declares a route for any HTTP method.
 #
@@ -336,6 +362,35 @@ let head(path, handler) = route("HEAD", path, handler)
 # @return [Entry] the declaration
 options : String -> Handler -> Entry
 let options(path, handler) = route("OPTIONS", path, handler)
+
+# Declares a WebSocket route: any client that completes the RFC 6455
+# handshake at `path` is handed a live `Connection`, ready to `send` and
+# `receiveMessage`. There is no subprotocol negotiation or handshake
+# rejection here — every request that upgrades is accepted; reach for
+# `Net.HTTP.WebSocket.upgrade` directly from an ordinary `get` route when you
+# need that.
+#
+# WebSocket routes don't take part in the plug stack: a `Connection -> Void`
+# handler isn't shaped like a `Handler`, and the upgrade handshake is a
+# different lifecycle from an ordinary request/response. A path inside a
+# `scope`, though, is prefixed exactly like any other route's.
+#
+# @param path [String] the route path, with +:name+ captures
+# @param handler [SocketHandler] runs once per connection, for as long as it stays open
+# @return [Entry] the declaration
+#
+# @example An echo server
+#   ws "/echo" do |socket|
+#     loop do
+#       match socket.receiveMessage.try do
+#         Text(text) => socket.send(Text(text)).try
+#         CloseMessage(_, _) => break
+#         _ => Void
+#       end
+#     end
+#   end
+ws : String -> SocketHandler -> Entry
+let ws(path, handler) = WsDefinition { path: path, handler: handler }
 
 # Adds a plug to the enclosing `router do ... end` or `scope do ... end`
 # body. Applies to every route declared in that body, direct or nested,
@@ -562,25 +617,34 @@ private do
   # foul code makes its enclosing context foul.
   compileRoutes : [Entry] -> Net.HTTP.Router
   foul compileRoutes(entries) = Net.HTTP.Router {
-    routes: flattened(entries, "", []).map(~compileFlat)
+    routes: flattened(entries, "", []).map(~compileFlat) + wsFlattened(entries, "").map(~compileWs)
   }
 
-  # A flattened route: a scope tree collapses to one of these per
-  # `Definition`, its plug stack accumulated top-down and its path prefixed
-  # by every scope it sat inside. A tuple, not a record — a `Flat` record
-  # with its own `method`/`path` fields hit a codegen bug the moment another
-  # record in this module (`Definition`) declared fields of the same name;
-  # see docs/kex-issues.md #18.
-  flattened : [Entry] -> String -> [Plug] -> [(String, String, [Plug], Handler)]
+  # Collapses a scope tree into one `Flat` per `Definition`.
+  flattened : [Entry] -> String -> [Plug] -> [Flat]
   let flattened(entries, prefix, inherited) do
     let stack = inherited + plugsOf(entries)
     routesAndScopesOf(entries).flatMap { |entry|
       match entry do
-        Definition { method, path, handler } => [(method, joinedPath(prefix, path), stack, handler)]
+        Definition { method, path, handler } =>
+          [Flat { method: method, path: joinedPath(prefix, path), plugs: stack, handler: handler }]
         Scope { prefix: childPrefix, children } => flattened(children, joinedPath(prefix, childPrefix), stack)
+        WsDefinition { path, handler } => []
       end
     }
   end
+
+  # Collapses a scope tree into one `WsDefinition` per `ws` declaration, path
+  # prefixed by every scope it sat inside. No plug stack: WebSocket routes
+  # don't take part in it — see `ws`'s own doc comment.
+  wsFlattened : [Entry] -> String -> [WsDefinition]
+  let wsFlattened(entries, prefix) = routesAndScopesOf(entries).flatMap { |entry|
+    match entry do
+      WsDefinition { path, handler } => [WsDefinition { path: joinedPath(prefix, path), handler: handler }]
+      Scope { prefix: childPrefix, children } => wsFlattened(children, joinedPath(prefix, childPrefix))
+      Definition { method, path, handler } => []
+    end
+  }
 
   plugsOf : [Entry] -> [Plug]
   let plugsOf(entries) = entries.flatMap { |entry|
@@ -608,8 +672,8 @@ private do
     combined.empty? then "/" else combined
   end
 
-  compileFlat : (String, String, [Plug], Handler) -> Route
-  foul compileFlat((method, path, plugs, base)) = Route {
+  compileFlat : Flat -> Route
+  foul compileFlat(Flat { method, path, plugs, handler: base }) = Route {
     method: method,
     path: path,
     handler: do |request, context|
@@ -618,6 +682,19 @@ private do
         handler(Context { request: request, context: context }),
         "${method} ${path}"
       )
+    end
+  }
+
+  # A `ws` route compiles to a plain GET: the RFC 6455 handshake a WebSocket
+  # client sends is itself an ordinary GET request, and `WebSocket.upgrade`
+  # is the part that recognizes it and answers with a 101 instead of calling
+  # `handler` at all when the request isn't a valid handshake.
+  compileWs : WsDefinition -> Route
+  foul compileWs(WsDefinition { path, handler }) = Route {
+    method: "GET",
+    path: path,
+    handler: do |request, context|
+      WebSocket.upgrade(request, do |handshake| Accept(handler, Headers.empty, None) end)
     end
   }
 
@@ -634,27 +711,20 @@ private do
   # from `.try`-ing its way to some other value (an escaped +Option+, for
   # instance) — see kexhq/rodolfo#7. Only a +String+ takes the plain-text
   # path; anything else is a bug in the application, logged and answered as
-  # a 500 rather than silently served as 200 text.
-  #
-  # One function with a `match`, not multi-clause overloads: overloaded
-  # `respond` clauses dispatched correctly when called directly from `main`
-  # but crashed with a BEAM `:if_clause` error when called from the closure
-  # a served request actually invokes — see docs/kex-issues.md #17.
-  foul respond(reply: Reply, route: String) -> Net.HTTP.Response<Binary> do
-    match reply do
-      text: String => Net.HTTP.Response.text(200, text)
-      Rodolfo.Markup.Safe { markup } => textual(200, markup, Headers.empty, "text/html; charset=utf-8")
-      Rodolfo.Response.JSON { status, body, headers } => textual(status, body, headers, "application/json")
-      Rodolfo.Response.Text { status, body, headers } => textual(status, body, headers, "text/plain; charset=utf-8")
-      Rodolfo.Response.HTML { status, body, headers } => textual(status, body, headers, "text/html; charset=utf-8")
-      Rodolfo.Response.Raw { status, body, headers, contentType } => Net.HTTP.Response.binary(status, body, typed(headers, contentType))
-      Rodolfo.Response.Empty { status, headers } => Net.HTTP.Response.binary(status, Binary.empty, headers)
-      Rodolfo.Response.Redirect { status, location, headers } => Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
-      other => do
-        IO.printError("Rodolfo: ${route} returned a value that is not a Reply: ${other}")
-        Net.HTTP.Response.text(500, "Internal Server Error")
-      end
-    end
+  # a 500 rather than silently served as 200 text. The final `Any` clause is
+  # what catches that: every other clause matches one of +Reply+'s own
+  # variants, so anything left over is not a +Reply+ at all.
+  foul respond(reply: String, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.text(200, reply)
+  foul respond(Rodolfo.Markup.Safe { markup }, route: String) -> Net.HTTP.Response<Binary> = textual(200, markup, Headers.empty, "text/html; charset=utf-8")
+  foul respond(Rodolfo.Response.JSON { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "application/json")
+  foul respond(Rodolfo.Response.Text { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "text/plain; charset=utf-8")
+  foul respond(Rodolfo.Response.HTML { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "text/html; charset=utf-8")
+  foul respond(Rodolfo.Response.Raw { status, body, headers, contentType }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, body, typed(headers, contentType))
+  foul respond(Rodolfo.Response.Empty { status, headers }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, Binary.empty, headers)
+  foul respond(Rodolfo.Response.Redirect { status, location, headers }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
+  foul respond(other: Any, route: String) -> Net.HTTP.Response<Binary> do
+    IO.printError("Rodolfo: ${route} returned a value that is not a Reply: ${other}")
+    Net.HTTP.Response.text(500, "Internal Server Error")
   end
 
   foul textual(status: Integer, body: String, headers: Headers, contentType: String) -> Net.HTTP.Response<Binary> do

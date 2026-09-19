@@ -1,8 +1,20 @@
 # `using Rodolfo` brings the route DSL (`router`, `get`, `post`, `Response`).
 # Net.HTTP is imported selectively: its `Response` is not Rodolfo's, and its
 # `Router` make-methods share names with the bare verbs.
+#
+# `Net.HTTP.WebSocket` is imported again here, directly, for the client side
+# (`WebSocket.connect`, `Message`'s variants) even though `Rodolfo` itself
+# already imports `WebSocket`/`Connection` for the server side: going through
+# Rodolfo's re-export type-checks, but `WebSocket.connect` isn't actually
+# exported in the compiled program unless something reachable from the
+# calling module's own compilation unit calls it — the same class of
+# codegen omission as docs/kex-issues.md #1/#2, just for a plain function
+# instead of a `serving` slot. `Message`/`Text`/`BinaryMessage`/`CloseMessage`
+# need importing regardless, since `Rodolfo` deliberately doesn't re-export
+# them (`Text` collides with `Response.Text`).
 using Rodolfo
 using Net.HTTP, only: [Client, Server, ServerOptions, Headers, Context, Request, Status]
+using Net.HTTP.WebSocket, only: [WebSocket, Message, Text, BinaryMessage, CloseMessage]
 using Net.Socket, only: [TCP]
 
 # A running Rodolfo router on an ephemeral loopback port, plus a pooled client
@@ -649,5 +661,78 @@ describe("Rodolfo composes routers") do
 
     Assert.equal(open.status.code, 200)
     Assert.equal(secret.status.code, 403)
+  end
+end
+
+describe("Rodolfo serves WebSocket routes") do
+  it("upgrades a client that completes the handshake, echoing messages") do
+    let api = Rodolfo.router do
+      ws "/echo" do |socket|
+        match socket.receiveMessage.try do
+          Text(text) => socket.send(Text(text)).try
+          _ => Void
+        end
+      end
+    end
+    let state = boot(api)
+    let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/echo").try
+    socket.send(Text("hello")).try
+    let reply = socket.receiveMessage.try
+    socket.close
+    teardown(state)
+
+    match reply do
+      Text(text) => Assert.equal(text, "hello")
+      _ => assert(false, "expected a Text message back, got ${reply}")
+    end
+  end
+
+  it("prefixes a ws route's path when declared inside a scope") do
+    let api = Rodolfo.router do
+      scope "/api" do
+        ws "/echo" do |socket|
+          match socket.receiveMessage.try do
+            Text(text) => socket.send(Text(text)).try
+            _ => Void
+          end
+        end
+      end
+    end
+    let state = boot(api)
+    let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/api/echo").try
+    socket.send(Text("scoped")).try
+    let reply = socket.receiveMessage.try
+    socket.close
+    teardown(state)
+
+    match reply do
+      Text(text) => Assert.equal(text, "scoped")
+      _ => assert(false, "expected a Text message back, got ${reply}")
+    end
+  end
+
+  it("leaves an ordinary route working alongside a ws route") do
+    let api = Rodolfo.router do
+      get "/" do |_| "home" end
+      ws "/echo" do |socket|
+        match socket.receiveMessage.try do
+          Text(text) => socket.send(Text(text)).try
+          _ => Void
+        end
+      end
+    end
+    let state = boot(api)
+    let home = send(state.client, state.port, "GET", "/")
+    let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/echo").try
+    socket.send(Text("still works")).try
+    let reply = socket.receiveMessage.try
+    socket.close
+    teardown(state)
+
+    Assert.equal(home.body.to(String).try, "home")
+    match reply do
+      Text(text) => Assert.equal(text, "still works")
+      _ => assert(false, "expected a Text message back, got ${reply}")
+    end
   end
 end
