@@ -15,6 +15,48 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-20, against `kexhq/kex#386` (`daaf62d`, not yet merged)
+
+kexhq/kex#386 picked up two more commits after the round documented in the
+section below this one (`10fd708` → `daaf62d`: "More fixing",
+"Fix WebSocket close issue, type collisions"). Re-tried both things that
+round left broken.
+
+**#385 is now fully fixed.** The `Kex.embed`/`Template.html`
+wrong-output-from-a-non-entry-module symptom is gone — confirmed with the
+same from-scratch repro that returned an empty string before
+(`let greet = Template.html(Kex.embed("hello.html.ket"))` in a module other
+than the entry file), and confirmed for real by moving `examples/chat`'s
+views back to `.ket` templates. `chat/login.html.ket` and `chat/chat.html.ket`
+now sit next to `chat/views.kex` (path resolution is relative to the
+*declaring* file as of this PR, not the entry file, so they don't need to
+live anywhere near `src/main.kex` or `spec/*.spec.kex` the way an
+entry-file-relative scheme would force) and all 13 `spec/views.spec.kex`
+cases pass, including the ones this file's own earlier round listed as
+untestable through this path (script-literal escaping, XSS via a query-
+parameter name).
+
+One more wrinkle surfaced getting there: `login`/`chat` originally called
+`Template.html(Kex.embed(...))` through a separate named binding
+(`let renderLogin = Template.html(...)`, referenced as `renderLogin(error)`
+from `login`) — passed `kex -C` and every spec under `kex -R`, then failed
+`kex --compile`'s `erlc` link step with `undefined function
+'Chat.Views.renderLogin'/1`. Different from #385's own report (that was a
+*cross*-module, qualified reference; this is same-module and unqualified) —
+worked around by calling `Template.html(Kex.embed(...))` inline instead of
+through an intermediate binding, which compiles clean. No upstream issue
+filed for this one yet.
+
+**`examples/library`'s `Shelf` is still not fixed.** Rewrote it as a
+`serving Catalogue` process a third time against this newer build — `kex
+-C` clean, all 13 `spec/shelf.spec.kex` cases pass, and the first real
+compiled-and-run call still crashes exactly the same way:
+`runtime error: Undefined method: matching for Server`. Reverted again.
+
+Net effect on this branch: `examples/chat/src/chat/views.kex` is back on
+`.ket` templates (`login.html.ket`, `chat.html.ket`). `examples/library`'s
+`Shelf` is unaffected.
+
 ## Re-verified 2026-09-20, against `kexhq/kex#386` (`10fd708`, not yet merged)
 
 A candidate fix for kexhq/kex#383, #384, and #385 (this file's own findings
@@ -578,12 +620,14 @@ blocker on the way back to `.ket` — `Kex.embed`/`Template.html` from a
 non-entry module, kexhq/kex#385. See this file's own 2026-09-20 section up
 top. `html$` stays.
 
-kexhq/kex#386 (open, not yet merged as of 2026-09-20) fixes half of #385 —
-`Kex.embed` now resolves against the declaring module's own file rather
-than the entry file's — but not the other half: the same call still
-silently returns wrong/empty output at runtime from a non-entry module. See
-the newer 2026-09-20 section (against `kexhq/kex#386`) above. `html$`
-stays.
+kexhq/kex#386 (open, not yet merged as of 2026-09-20) fixed the path half of
+#385 first (`10fd708`), then the wrong-output half too (`daaf62d`, "Fix
+WebSocket close issue, type collisions"). **`html$` is gone as of `daaf62d`**
+— `examples/chat/src/chat/views.kex` uses `.ket` templates again
+(`chat/login.html.ket`, `chat/chat.html.ket`), the workaround this entry
+originally described. See the newest 2026-09-20 section (against
+`kexhq/kex#386` at `daaf62d`) above for the one new, small, unrelated wrinkle
+found getting there.
 
 Found 2026-09-19 while separating `examples/chat`'s two pages (a login form
 and the chat UI, both with ordinary CSS/JS, a few KB each) into `.ket`
