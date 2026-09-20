@@ -15,6 +15,39 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-20, against `kexhq/kex#386` (`bc6651d`, not yet merged)
+
+One more commit landed (`bc6651d`, "Fix cache bug") — and this one closes
+out kexhq/kex#27. Its own code comment names the issue directly: the
+run-result cache (kexhq/kex#323) was restoring its saved `.beam` files
+*before* the unconditional prebuilt-runtime-beam copy that #27 is about,
+so a cache hit let the stale prebuilt `Kex.URI.beam` win the same way an
+uncached run always did — reordering the two steps fixes it.
+
+**Confirmed with a full, real `tey build` + `tey test` run** — built
+`tey` from this exact kex checkout (`make build-tey`) and ran it against
+the whole workspace for the first time, rather than approximating with
+direct `kex` invocations. `tey build`: clean for every package. `tey
+test`: **50/50 for `rodolfo` itself** (was 49/50 two commits ago, with
+kexhq/kex#27's query-decoding failure as the one holdout) and every
+example's own suite passes too, `examples/chat` included — zero failures
+across the entire workspace.
+
+**Re-tried `examples/library`'s `Shelf` as a `serving` process a fourth
+time, against this same build. Still broken, identically:** `kex -C`
+clean, but every one of `spec/shelf.spec.kex`'s 13 cases fails under real
+`tey test` execution with `Undefined method: <slot> for Server` — not just
+`matching`, this time `filed`, `dropped`, and `lent` all hit it too, so
+it's not specific to any one slot's name. Reverted again. This remains the
+one unfixed item found in today's whole session; kexhq/kex#384 already
+covers it as an acknowledged, not-yet-reduced failure mode.
+
+Net effect: nothing changed in this branch from this round — the fix
+landed in a part of the toolchain (`#27`) this branch doesn't itself
+depend on, and the one thing it does depend on that's still broken
+(`examples/library`'s `Shelf`) is still broken. Recorded here as confirmation,
+not as a change.
+
 ## Re-verified 2026-09-20, against `kexhq/kex#386` (`9e78011`, not yet merged)
 
 One more commit landed (`9e78011`, "Add new spec and fix") — a follow-up to
