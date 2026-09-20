@@ -1,11 +1,26 @@
 # Chat's two pages. Built with Rodolfo's own `html$` tagged literal rather
 # than a `.ket` template (`Kex.embed` + `Template.html`, kexhq/kex#171):
-# `Template.scan` is severely super-linear on real-sized input — even a
-# ~2KB page with ordinary CSS times out at its hardcoded 2000ms compile-time
-# budget — so a page this size can't compile through it yet. See
-# kexhq/kex#379 (filed from exactly this) and docs/kex-issues.md. Worth
-# retrying once that's fixed; `html$` works today and produces the same
-# escaping guarantees `Template.html` would.
+# `Template.scan` was severely super-linear on real-sized input — even a
+# ~2KB page with ordinary CSS timed out at its hardcoded 2000ms compile-time
+# budget (kexhq/kex#379).
+#
+# #379 is fixed (`kexhq/kex` `main` at `430c272`) and retried 2026-09-20, but
+# `.ket` still can't be used here: `Kex.embed` resolves its path relative to
+# the program's ENTRY file, and — per its own comment in kex's `main.cxx`
+# ("a Kex.embed inside a dependency module's own source resolves against the
+# wrong directory until per-declaration source provenance exists") — that
+# isn't reliable yet for a `Kex.embed`/`Template.html` call declared in an
+# imported module rather than the entry file itself. Confirmed empirically:
+# with the templates moved so the (entry-file-relative) path resolves
+# correctly from both `src/main.kex` and every `spec/*.spec.kex`, a
+# `Chat.Views.login`/`.chat` wrapper around `Template.html(Kex.embed(...))`
+# compiled clean but returned `None`/empty output at runtime — silently, no
+# error — while the exact same `Template.html(Kex.embed(...))` call inlined
+# in the entry file itself rendered correctly. So this is a second, distinct
+# blocker, not #379 recurring; no upstream issue filed yet for it. `html$`
+# stays: it works today and produces the same escaping guarantees
+# `Template.html` would, and unlike `.ket` it isn't entry-file-relative, so
+# `Chat.Views` can stay its own module.
 #
 # Named `Chat.Views`, not the bare `Views` every other example uses: `tey`
 # resolves the workspace `rodolfo` dependency by pulling in every sibling

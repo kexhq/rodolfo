@@ -15,6 +15,87 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-20, against `kex 0.4.0-beta.3 (aecf378)`
+
+`../kex` moved from `b913dac` to `main`'s tip (`aecf378`), landing three
+fixes: `58be7b7` (module alias records, closing kexhq/kex#377), `430c272`
+(closing kexhq/kex#378 and kexhq/kex#379), and `b99d275` ("Add explicit
+timeouts to `receiveMessage`", closing kexhq/kex#381). Built locally as
+`/home/akos/kex/kex/build/kex` (`make build-tey`) and re-verified each
+workaround these were expected to retire.
+
+**#28 is fixed**, and its workaround is gone. `examples/chat/src/main.kex`'s
+`ws "/chat"` handler now matches `socket.receiveMessage` with no special case
+for `Timeout` — a bare `receiveMessage` blocks for as long as the peer stays
+connected, which #381's fix made true. Verified against the rebuilt compiler:
+`kex -C` reports nothing new, and both spec files (`spec/views.spec.kex`,
+`spec/protocol.spec.kex`, 22 examples) pass unchanged. Also switched
+`Room.users` from `[(String, Connection)]` to `{String: Connection}` while in
+there — `taken?`/`join` no longer scan the list, `leave` no longer filters it
+by hand — at the cost of roster order: a `Map`'s `keys` come back in
+canonical (alphabetical) order, not insertion order, so the roster no longer
+shows the newest arrival first. Nothing downstream assumed the old order.
+
+**#2 (kexhq/kex#377) is fixed only for the shape its own regression test
+covers** — a single slot taking a real argument. Retried both places
+Rodolfo has a workaround for it and reverted both:
+
+- `examples/chat`: pulling `Room`'s `serving` block out of `main.kex` into
+  its own `Chat.Room` module type-checked clean and all specs passed, but
+  specs never actually exercise `Process.spawn`/a live slot call, and a
+  *live, compiled* run of `main.kex` couldn't be produced to confirm it at
+  all — `socket.close` fails to compile for an unrelated reason (see kex#383
+  below), blocking the whole example's BEAM build regardless of this change.
+  Given `examples/library`'s identical-in-spirit attempt (below) demonstrably
+  broke at runtime despite passing the same level of static verification,
+  `Room` stays in the entrypoint rather than shipping something unverified.
+- `examples/library`: rewrote `Shelf` as a `serving Catalogue` process (kept
+  file-backed, so a restart still doesn't lose the catalogue — the process
+  just serializes access to it instead of racing the file directly). Passed
+  `kex -C` and all 13 of `spec/shelf.spec.kex`'s cases under the interpreter,
+  then failed at the first real compiled-and-run call — `shelf.matching("")`
+  from `main`, an arity-1 slot, the same shape #377's own fix targets —
+  with `runtime error: Undefined method: matching for Server`, a different
+  error and a different code path (`kex_io:undefined_method`) than #377's
+  own `'function not exported'` signature. Reverted; `examples/library`
+  keeps the tab-separated file.
+
+Filed upstream as kexhq/kex#384, with a clean, minimal, reliably-reproducing
+zero-argument-slot variant of the same underlying defect (`#377`'s own fix
+doesn't cover a slot with no arguments either) plus a description of the
+`examples/library`-shaped failure above, which resisted a minutes-scale
+attempt to reduce to something small the way the zero-arg case did.
+
+**#25 (kexhq/kex#379) is fixed for the exact defect it named** — confirmed
+by reading `430c272`'s diff to `src/stdlib/template.kex`: `scanLine`,
+`scanText`, and `scanTagBody` all replace their old one-`Char`-at-a-time
+`push!` (quadratic, since pushing to a `var` list rebinds it to a freshly
+copied list every call) with tracking a run's start position and slicing it
+out once. Retried `.ket` for `examples/chat`'s views and hit a **different,
+still-open blocker**: `Kex.embed`/`Template.html` inside `Chat.Views` (an
+imported module, not the entry file) compiled clean but returned
+`None`/empty output at runtime with no error — silently wrong, not merely
+slow. The exact same call, inlined into the entry file, rendered correctly.
+Filed upstream as kexhq/kex#385, with a minimal repro that turns the same
+root cause into a compile-time type error instead (extra parameter,
+`Result`-wrapped return) rather than the harder-to-demonstrate silent-`None`
+shape actually hit here. `examples/chat/src/chat/views.kex` keeps `html$`.
+
+**kexhq/kex#383**, a new, unrelated finding made while re-verifying #2 above:
+`socket.close` in `examples/chat/src/main.kex`'s `ws "/chat"` handler fails
+`kex -C`/`kex --compile` — the checker resolves `close` to `FileHandle`'s
+version instead of `Connection`'s own, then rejects the call for a receiver
+type mismatch. Confirmed reproducing on unmodified `main` (not something
+today's changes caused) and on kex commits well before today's three fixes
+(`b913dac`, `58be7b7`), so it's longstanding, not a regression — just never
+hit by a repro this exact shape before. Only the compiled path is affected;
+`kex -R` runs straight past it. This blocks a full compiled-and-run
+verification of `examples/chat` end to end; every check above that needed a
+live server used a throwaway copy with `socket.close` stubbed out to get
+past it, since it's unrelated to what was being verified. No workaround
+applied to the shipped example — the two `socket.close` call sites are
+unchanged and still there, waiting on kex#383.
+
 ## Re-verified 2026-09-19, against `kex 0.4.0-beta.3 (b913dac)`
 
 `../kex` moved from `3c4152e` to `main`'s tip (`b913dac`, PR #374
@@ -301,7 +382,12 @@ tab-separated file (`src/shelf.kex`) instead of in a process.
 
 ### 2. `serving` declared in an imported module never resolves
 
-Filed upstream as kexhq/kex#377.
+Filed upstream as kexhq/kex#377. **Fixed** on `58be7b7`, but only for the
+shape its own regression test covers (one slot, a real argument) — retried
+2026-09-20 for both `examples/chat`'s `Room` and `examples/library`'s
+`Shelf`, and both broke in new ways (a zero-argument slot; a realistic
+multi-module app's first call). See this file's own 2026-09-20 section up
+top and kexhq/kex#384. Both workarounds below stay.
 
 **Still reproduces** on `main` (`b913dac`, 2026-09-19) for Rodolfo's actual
 shape — `using Rodolfo` in the entrypoint, a `serving` block in a plain
@@ -417,7 +503,11 @@ unaffected and stays in `src/rodolfo.kex`.
 
 ### 25. `Template.scan` is severely super-linear — a `.ket` template of ordinary page size times out
 
-Filed upstream as kexhq/kex#379.
+Filed upstream as kexhq/kex#379. **Fixed** on `430c272`. Retried
+2026-09-20 for `examples/chat`'s views and hit a different, still-open
+blocker on the way back to `.ket` — `Kex.embed`/`Template.html` from a
+non-entry module, kexhq/kex#385. See this file's own 2026-09-20 section up
+top. `html$` stays.
 
 Found 2026-09-19 while separating `examples/chat`'s two pages (a login form
 and the chat UI, both with ordinary CSS/JS, a few KB each) into `.ket`
@@ -560,7 +650,10 @@ general shape is worth fixing upstream rather than naming module by module.
 
 ### 28. A WebSocket receive gives up after 31 seconds and reports a live, idle client as closed
 
-Filed upstream as kexhq/kex#381.
+Filed upstream as kexhq/kex#381. **Fixed** on `b99d275` ("Add explicit
+timeouts to `receiveMessage`") — the workaround below is gone from
+`examples/chat/src/main.kex` as of 2026-09-20; see this file's own
+2026-09-20 section up top for what changed and how it was verified.
 
 Found 2026-09-19 in `examples/chat`, and the reason a room drops people at
 random: anyone who hasn't typed in half a minute is disconnected, which in a
