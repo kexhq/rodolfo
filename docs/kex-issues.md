@@ -15,6 +15,68 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-20, against `kexhq/kex#386` (`10fd708`, not yet merged)
+
+A candidate fix for kexhq/kex#383, #384, and #385 (this file's own findings
+from earlier today), plus #375. Built locally in a worktree
+(`/tmp/kex-pr386`, `make build`) and re-tried every workaround this file's
+own 2026-09-20 section above had just reverted.
+
+**#383 is fixed**, but needs one code change alongside it, not none:
+`examples/chat/src/main.kex` now imports `Connection` explicitly
+(`using Net.HTTP.WebSocket, only: [Connection, Message, Text, BinaryMessage,
+CloseMessage]`) — the fix makes `only: [Connection]` actually work, rather
+than making `.close` resolve correctly with no import of `Connection` at
+all. Verified: `kex -C` reports nothing, where it reported both `close`
+errors before.
+
+**#384 is fixed for both shapes tried**: the zero-argument-slot minimal
+repro from the upstream issue, and — the real test — pulling
+`examples/chat`'s `Room` back out into its own `Chat.Room` module. Verified
+past what #383/#384's own fixes cover on their own: `kex -C` reports zero
+errors (not even #383's, once `Connection` is imported), all 22 spec cases
+pass, and `kex --compile` produces a working `kex_main.beam` with the real
+`socket.close` calls intact — no stubbing needed this time, unlike every
+previous attempt today. A live WebSocket run still doesn't get past the
+`env.query` call in the `ws` handler, but a throwaway copy with
+`IO.printLine` calls added around it confirms this is #27 (the `URI`
+prebuilt-artifact staging issue) firing before `Chat.Room` is ever reached
+— same failure, same point, on a debug build with no `Room` involved at
+all. `Chat.Room`'s own dispatch is not what's blocking a live run.
+
+**#384 is *not* fixed for `examples/library`'s `Shelf`.** Rewrote it as a
+`serving Catalogue` process again, identically to the earlier attempt: `kex
+-C` clean, all 13 `spec/shelf.spec.kex` cases pass, and it still fails at
+the first real compiled-and-run call exactly the same way —
+`runtime error: Undefined method: matching for Server` from
+`kex_io:undefined_method`, unchanged by this fix. Reverted again; the
+tab-separated file stays. This is the failure mode flagged as unreduced in
+kexhq/kex#384's own report — still open.
+
+**#385 is partially fixed.** The path-resolution half is genuinely fixed —
+`Kex.embed(...)` inside an imported module now resolves against *that
+module's own file*, not the entry file (matching the fix's stated intent:
+"each dependency module is now compile-time-expanded against its own path
+before being merged into the program"). Confirmed with a from-scratch repro:
+a template co-located with its module now embeds correctly by a bare
+filename, where before this fix the entry file's directory was the only one
+that worked.
+
+The wrong-output half is not fixed. The exact minimal case from this file's
+own 2026-09-20 section above — `let greet = Template.html(Kex.embed(...))`
+in a module other than the entry file — still produces empty output at
+runtime with no error (`IO.printLine("${Greet.Views.greet("Ada")}")` prints
+a bare newline), and a version going through an extra wrapper function still
+type-errors the same way (`Result<String, TemplateError>`, an extra
+parameter). `examples/chat/src/chat/views.kex` keeps `html$`; the `.ket`
+migration stays blocked.
+
+Net effect on this branch: `examples/chat`'s `Room` moved back into its own
+`Chat.Room` module and `Connection` is now imported explicitly.
+`examples/library`'s `Shelf` and `examples/chat`'s `.ket` migration are
+unaffected — both workarounds noted in the section below stay, pending
+further upstream work.
+
 ## Re-verified 2026-09-20, against `kex 0.4.0-beta.3 (aecf378)`
 
 `../kex` moved from `b913dac` to `main`'s tip (`aecf378`), landing three
@@ -387,7 +449,14 @@ shape its own regression test covers (one slot, a real argument) — retried
 2026-09-20 for both `examples/chat`'s `Room` and `examples/library`'s
 `Shelf`, and both broke in new ways (a zero-argument slot; a realistic
 multi-module app's first call). See this file's own 2026-09-20 section up
-top and kexhq/kex#384. Both workarounds below stay.
+top and kexhq/kex#384.
+
+kexhq/kex#386 (open, not yet merged as of 2026-09-20) fixes the
+zero-argument-slot shape — confirmed against `examples/chat`'s actual `Room`,
+moved back into its own module — but **not** `examples/library`'s `Shelf`,
+which fails the identical way, unchanged. `Room`'s workaround is gone;
+`Shelf`'s stays. See the newer 2026-09-20 section (against `kexhq/kex#386`)
+above the one this paragraph is appended to.
 
 **Still reproduces** on `main` (`b913dac`, 2026-09-19) for Rodolfo's actual
 shape — `using Rodolfo` in the entrypoint, a `serving` block in a plain
@@ -508,6 +577,13 @@ Filed upstream as kexhq/kex#379. **Fixed** on `430c272`. Retried
 blocker on the way back to `.ket` — `Kex.embed`/`Template.html` from a
 non-entry module, kexhq/kex#385. See this file's own 2026-09-20 section up
 top. `html$` stays.
+
+kexhq/kex#386 (open, not yet merged as of 2026-09-20) fixes half of #385 —
+`Kex.embed` now resolves against the declaring module's own file rather
+than the entry file's — but not the other half: the same call still
+silently returns wrong/empty output at runtime from a non-entry module. See
+the newer 2026-09-20 section (against `kexhq/kex#386`) above. `html$`
+stays.
 
 Found 2026-09-19 while separating `examples/chat`'s two pages (a login form
 and the chat UI, both with ordinary CSS/JS, a few KB each) into `.ket`

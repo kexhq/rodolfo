@@ -1,0 +1,64 @@
+# The room's shared state: who is connected, under what name. A `serving`
+# process rather than plain functions on a module (the way `examples/library`'s
+# `Shelf` had to be written) — the room is mutated from many connections' route
+# handlers concurrently, and a process serializes that for free.
+#
+# Lived inline in `main.kex` until kexhq/kex#377 (and its follow-on gap,
+# kexhq/kex#384) were fixed: a `serving` block's slots were not reliably
+# exported once the compiled program also depended on `Net.HTTP` and the
+# block sat in anything but the entrypoint module (docs/kex-issues.md #2).
+# Fixed upstream, so the room gets its own module like everything else here.
+module Chat.Room
+
+using Net.HTTP.WebSocket, only: [Connection, Text]
+
+# Every connection, by name — a name doubles as the room's idea of "who's
+# here", so `join` can refuse a name already in use and the client can be
+# shown a live roster, not just a scrolling log. `broadcast` doubles as the
+# only place a dead connection gets noticed: a socket whose `send` fails —
+# the peer closed without a clean handshake, most likely — is dropped from
+# the room rather than tracked down by a separate message.
+#
+# A `Map`, not a list of pairs: `taken?`/`join` no longer scan every
+# connection to find a name, `leave` no longer has to filter it out by hand.
+# The one thing this trades away is roster order — a `Map`'s `keys` come back
+# in canonical key order (alphabetical, here), not insertion order, so the
+# roster sorts by name rather than showing whoever joined most recently
+# first. Nothing downstream (`chat.js`'s `updateRoster`, the specs) assumes
+# an order, so this is a pure win.
+record Room do
+  users : {String: Connection} = {}
+end
+
+serving Room do
+  # Checked from the login page itself, before ever reaching `/chat` — a
+  # nicer failure than "you connected, then got kicked off" for the common
+  # case. `join` re-checks (and is the one that actually matters): a second
+  # connection could pick the same name in the gap between this check and
+  # the next request, and only `join` runs atomically with the join itself.
+  slot taken?(name: String) -> Reply<Bool> do
+    return { reply: @users.has?(name) }
+  end
+
+  # `None` means the name is already taken and nothing changed; `Just`
+  # carries the roster (every name, this one included) to announce.
+  slot join(name: String, socket: Connection) -> Reply<[String]?> do
+    if @users.has?(name)
+      return { reply: None }
+    else
+      new.users = @users.put(name, socket)
+      return { new, reply: Just(new.users.keys) }
+    end
+  end
+
+  # The roster after removal, to announce the same way `join` does.
+  slot leave(name: String) -> Reply<[String]> do
+    new.users = @users.delete(name)
+    return { new, reply: new.users.keys }
+  end
+
+  slot broadcast(text: String) -> Void do
+    new.users = @users.filter { |_, socket| socket.send(Text(text)).ok? }
+    return new
+  end
+end

@@ -7,21 +7,13 @@
 # Run this, then open http://localhost:3000/ in two or more browser tabs (or
 # two different browsers) — enter "let-me-in" as the room password and a
 # different name in each, and chat between them. The two pages themselves
-# live in `chat/views.kex` — see there for how they're built.
-#
-# `Room` is declared right here in the entrypoint module on purpose — a
-# `serving` process whose slots are called from a route handler only works
-# reliably when the `serving` block sits in the entrypoint, not an imported
-# module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
-# kexhq/kex#377 fixed the shape that entry covers, but not reliably enough to
-# move `Room` out yet — re-tried 2026-09-20 (extracted to its own
-# `Chat.Room` module) and reverted: with `Net.HTTP` in the build, a
-# `serving` process in an imported module still fails its first call some of
-# the time, in more than one shape (see docs/kex-issues.md #2's own update).
+# live in `chat/views.kex`, and the room's shared state in `chat/room.kex` —
+# see there for how each is built.
 using Rodolfo
-using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
+using Net.HTTP.WebSocket, only: [Connection, Message, Text, BinaryMessage, CloseMessage]
 using Chat.Views
 using Chat.Protocol
+using Chat.Room
 
 # Deliberately simple: one shared password for the whole room, checked
 # against a query parameter on both the login page and the WebSocket URL
@@ -30,59 +22,8 @@ using Chat.Protocol
 roomToken : String
 let roomToken = "let-me-in"
 
-# Every connection, by name — a name doubles as the room's idea of "who's
-# here", so `join` can refuse a name already in use and the client can be
-# shown a live roster, not just a scrolling log. `broadcast` doubles as the
-# only place a dead connection gets noticed: a socket whose `send` fails —
-# the peer closed without a clean handshake, most likely — is dropped from
-# the room rather than tracked down by a separate message.
-#
-# A `Map`, not a list of pairs: `taken?`/`join` no longer scan every
-# connection to find a name, `leave` no longer has to filter it out by hand.
-# The one thing this trades away is roster order — a `Map`'s `keys` come back
-# in canonical key order (alphabetical, here), not insertion order, so the
-# roster sorts by name rather than showing whoever joined most recently
-# first. Nothing downstream (`chat.js`'s `updateRoster`, the specs) assumes
-# an order, so this is a pure win.
-record Room do
-  users : {String: Connection} = {}
-end
-
-serving Room do
-  # Checked from the login page itself, before ever reaching `/chat` — a
-  # nicer failure than "you connected, then got kicked off" for the common
-  # case. `join` re-checks (and is the one that actually matters): a second
-  # connection could pick the same name in the gap between this check and
-  # the next request, and only `join` runs atomically with the join itself.
-  slot taken?(name: String) -> Reply<Bool> do
-    return { reply: @users.has?(name) }
-  end
-
-  # `None` means the name is already taken and nothing changed; `Just`
-  # carries the roster (every name, this one included) to announce.
-  slot join(name: String, socket: Connection) -> Reply<[String]?> do
-    if @users.has?(name)
-      return { reply: None }
-    else
-      new.users = @users.put(name, socket)
-      return { new, reply: Just(new.users.keys) }
-    end
-  end
-
-  # The roster after removal, to announce the same way `join` does.
-  slot leave(name: String) -> Reply<[String]> do
-    new.users = @users.delete(name)
-    return { new, reply: new.users.keys }
-  end
-
-  slot broadcast(text: String) -> Void do
-    new.users = @users.filter { |_, socket| socket.send(Text(text)).ok? }
-    return new
-  end
-end
-
 main do
-  let room = Process.spawn(Room {})
+  let room = Process.spawn(Chat.Room.Room {})
 
   let site = Rodolfo.router do
     get "/" do |env|
