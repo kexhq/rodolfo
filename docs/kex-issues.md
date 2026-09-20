@@ -15,6 +15,27 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-20, against `kexhq/kex#386` (`47a2009`, not yet merged)
+
+One more commit landed on top of the round documented in the section below
+this one: `47a2009`, "Fix zero arg binding call" — directly fixing the
+wrinkle that section's own last paragraph described (its own commit message
+credits "kexhq/rodolfo's report"). Confirmed against both the fix's own new
+spec (`spec/module_zero_arg_binding_call_beam.kex` — a module-scoped
+`let name = <closure>` called from a sibling function in the same module,
+run standalone) and the real case: `examples/chat/src/chat/views.kex` is
+back to calling `renderLogin`/`renderChat` as separate named bindings
+(`let renderLogin = Template.html(Kex.embed(...))`, called as
+`renderLogin(error)`) rather than inlining the whole
+`Template.html(Kex.embed(...))` expression at every call site — `kex -C`
+clean, all 13 `spec/views.spec.kex` cases pass, `kex --compile` links.
+
+`examples/library`'s `Shelf` was not re-tried this round — nothing in this
+commit touches the `serving`/`Server` dispatch path the earlier rounds'
+`Undefined method: matching for Server` crash comes from, and re-running an
+identical repro against an unrelated fix wasn't worth the build time. Still
+presumed broken until re-verified.
+
 ## Re-verified 2026-09-20, against `kexhq/kex#386` (`daaf62d`, not yet merged)
 
 kexhq/kex#386 picked up two more commits after the round documented in the
@@ -625,9 +646,13 @@ kexhq/kex#386 (open, not yet merged as of 2026-09-20) fixed the path half of
 WebSocket close issue, type collisions"). **`html$` is gone as of `daaf62d`**
 — `examples/chat/src/chat/views.kex` uses `.ket` templates again
 (`chat/login.html.ket`, `chat/chat.html.ket`), the workaround this entry
-originally described. See the newest 2026-09-20 section (against
-`kexhq/kex#386` at `daaf62d`) above for the one new, small, unrelated wrinkle
-found getting there.
+originally described. A third commit (`47a2009`, "Fix zero arg binding
+call") fixed one more wrinkle found getting there — a same-module,
+unqualified call to a `Template.html(Kex.embed(...))`-bound value failing
+`kex --compile`'s link step — so `renderLogin`/`renderChat` are named
+bindings again rather than the inlined-call workaround the previous round
+used. See the newest 2026-09-20 section (against `kexhq/kex#386` at
+`47a2009`) above.
 
 Found 2026-09-19 while separating `examples/chat`'s two pages (a login form
 and the chat UI, both with ordinary CSS/JS, a few KB each) into `.ket`

@@ -8,14 +8,12 @@
 # resolution is relative to the declaring file, not the program's entry
 # file, as of #386.
 #
-# `login`/`chat` call `Template.html(Kex.embed(...))` inline rather than
-# through a separate named binding (`let renderLogin = Template.html(...)`,
-# called as `renderLogin(error)`) — that compiled clean and passed under
-# `kex -R`, but `kex --compile` failed at the `erlc` link step with
-# `undefined function 'Chat.Views.renderLogin'/1`, a same-module,
-# unqualified reference to the bound value. Not the same bug #385 named
-# (that was a *cross*-module, qualified call); found while re-verifying
-# #386's fix for this file. No upstream issue filed yet.
+# `renderLogin`/`renderChat` are named bindings rather than being called
+# inline, which briefly had to change back during #386's development: a
+# module-scoped `let name = <closure>` called from a sibling function in the
+# same module compiled but failed `kex --compile`'s `erlc` link step
+# (`undefined function`). Fixed in #386's own follow-up commit
+# ("Fix zero arg binding call") — verified against it directly.
 #
 # Named `Chat.Views`, not the bare `Views` every other example uses: `tey`
 # resolves the workspace `rodolfo` dependency by pulling in every sibling
@@ -32,8 +30,10 @@ using Rodolfo, only: [Safe, safe]
 # `login.html.ket`'s own `<% if !error.empty? %>` decides whether the notice
 # shows at all, and its `<%= error %>` HTML-escapes it same as any other
 # hole.
+let renderLogin = Template.html(Kex.embed("login.html.ket"))
+
 login : String -> Safe
-let login(error) = safe(Template.html(Kex.embed("login.html.ket"))(error))
+let login(error) = safe(renderLogin(error))
 
 # The chat page itself: a name already checked against the room password, so
 # all it has to do is open the WebSocket at `socketPath` (already the
@@ -45,8 +45,10 @@ let login(error) = safe(Template.html(Kex.embed("login.html.ket"))(error))
 # everywhere else on the page. `jsLiteral` builds those literals and the
 # template embeds them raw with `<%== %>`; `name` further down stays a
 # `<%= %>` hole, escaped as normal, since it renders as HTML there.
+let renderChat = Template.html(Kex.embed("chat.html.ket"))
+
 chat : String -> String -> Safe
-let chat(name, socketPath) = safe(Template.html(Kex.embed("chat.html.ket"))(name, jsLiteral(name), jsLiteral(socketPath)))
+let chat(name, socketPath) = safe(renderChat(name, jsLiteral(name), jsLiteral(socketPath)))
 
 # A JS string literal for a `<script>` hole: JSON, with the two characters
 # that could end the element escaped the way JavaScript, not HTML, spells
