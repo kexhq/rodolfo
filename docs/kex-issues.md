@@ -15,6 +15,40 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-21, against `kexhq/kex#386` (`be6b5e2`, not yet merged)
+
+One more commit landed — `be6b5e2`, "Fix Server<T>" — and this is the one
+that finally closes out `examples/library`'s `Shelf`, the single thing left
+unfixed after four prior attempts. Its own spec
+(`spec/serving_slot_through_unimported_module.kex`) names the exact bug: a
+`serving` slot called through a `Server<T>` value fell through every real
+candidate to the runtime's generic dispatcher — `kex -C` reported nothing
+wrong, and the first real call died with `Undefined method: <slot> for
+Server`, the identical text every attempt here hit. Root cause:
+`checkCall`'s exemption for "a value whose type already names its module"
+read the receiver's own type name to find the module — correct for an
+ordinary receiver, but a `Process.spawn` result's type name is the bare
+word `Server`, no module prefix at all, so the exemption always missed and
+the call had nothing left to fall back to. Fixed by unwrapping `Server<T>`
+to `T` first, the same way an ordinary receiver's type already was.
+
+**Rewrote `Shelf` as a `serving Catalogue` process a fifth time, against
+this build — and this time it's real.** `kex -C` clean, all 13
+`spec/shelf.spec.kex` cases pass, and — the part every previous attempt
+failed at — a full `tey build && tey test` for the whole workspace: **zero
+failures.** Also: the `rewritten` name collision every previous attempt
+needed a rename to work around (`Catalog.Books`'s private helper renamed to
+`reeditedBook`) is gone too, with no rename needed — same underlying fix,
+since that collision was `shelf.rewritten(...)`'s call falling through the
+same way. Verified live as well: `tey run` against a real HTTP server,
+`GET /books` lists the mock catalogue, `POST /books` adds a book and it
+shows up on reload — the write path through the process, not just the
+reads, confirmed working.
+
+This closes out kexhq/kex#384 completely as far as this repo's own needs go
+— every workaround this session found is now fixed upstream (unmerged, but
+fixed). `examples/library/src/shelf.kex` is a `serving` process again.
+
 ## Re-verified 2026-09-20, against `kexhq/kex#386` (`bc6651d`, not yet merged)
 
 One more commit landed (`bc6651d`, "Fix cache bug") — and this one closes
@@ -601,12 +635,11 @@ shape its own regression test covers (one slot, a real argument) — retried
 multi-module app's first call). See this file's own 2026-09-20 section up
 top and kexhq/kex#384.
 
-kexhq/kex#386 (open, not yet merged as of 2026-09-20) fixes the
-zero-argument-slot shape — confirmed against `examples/chat`'s actual `Room`,
-moved back into its own module — but **not** `examples/library`'s `Shelf`,
-which fails the identical way, unchanged. `Room`'s workaround is gone;
-`Shelf`'s stays. See the newer 2026-09-20 section (against `kexhq/kex#386`)
-above the one this paragraph is appended to.
+kexhq/kex#386 (open, not yet merged) fixes the zero-argument-slot shape
+first — confirmed against `examples/chat`'s actual `Room`, moved back into
+its own module — and, as of a later commit (`be6b5e2`, "Fix Server<T>"),
+**`examples/library`'s `Shelf` too.** Both workarounds are gone as of
+2026-09-21. See the newest 2026-09-21 section above for `Shelf`'s fix.
 
 **Still reproduces** on `main` (`b913dac`, 2026-09-19) for Rodolfo's actual
 shape — `using Rodolfo` in the entrypoint, a `serving` block in a plain

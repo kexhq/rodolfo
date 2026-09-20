@@ -23,103 +23,114 @@ end
 describe("Shelf.opened") do
   it("writes the opening catalogue when there is no file yet") do
     let path = scratch("opened")
-    let books = Shelf.opened([dune(), draft("Emma", "Jane Austen", "1815")])
-    assert(books.count == 2)
+    let shelf = Shelf.opened([dune(), draft("Emma", "Jane Austen", "1815")])
+    assert(shelf.matching("").try.count == 2)
     assert(FS.File.exists?(path))
   end
 
   it("leaves an existing catalogue alone") do
     scratch("reopened")
-    Shelf.opened([dune()])
-    Shelf.filed(draft("Emma", "Jane Austen", "1815"))
-    let books = Shelf.opened([dune()])
-    assert(books.count == 2)
+    let first = Shelf.opened([dune()])
+    first.filed(draft("Emma", "Jane Austen", "1815")).try
+    let reopened = Shelf.opened([dune()])
+    assert(reopened.matching("").try.count == 2)
   end
 end
 
 describe("Shelf.filed") do
   it("returns the id it gave the book and stores it") do
     scratch("filed")
-    let id = Shelf.filed(dune())
+    let shelf = Shelf.opened([])
+    let id = shelf.filed(dune()).try
     assert(id == 1)
-    assert(Shelf.find(id).map { |book| book.title } == Just("Dune"))
+    assert(shelf.find(id).try.map { |book| book.title } == Just("Dune"))
   end
 
   it("counts past the highest id in use, not past the shelf's length") do
     scratch("filed-again")
-    let first = Shelf.filed(dune())
-    Shelf.filed(draft("Emma", "Jane Austen", "1815"))
-    Shelf.dropped(first)
-    assert(Shelf.filed(draft("Ancillary Justice", "Ann Leckie", "2013")) == 3)
+    let shelf = Shelf.opened([])
+    let first = shelf.filed(dune()).try
+    shelf.filed(draft("Emma", "Jane Austen", "1815")).try
+    shelf.dropped(first).try
+    assert(shelf.filed(draft("Ancillary Justice", "Ann Leckie", "2013")).try == 3)
   end
 end
 
-describe("Shelf.books") do
+# No separate `Shelf.books` slot — `matching("")` doubles as "every book,
+# newest first".
+describe("Shelf.matching") do
   it("reads an absent file as an empty catalogue") do
     scratch("absent")
-    assert(Shelf.books == [])
+    let shelf = Shelf.opened([])
+    assert(shelf.matching("").try == [])
   end
 
-  it("returns the newest book first") do
+  it("returns the newest book first for an empty term") do
     scratch("ordered")
-    Shelf.filed(dune())
-    Shelf.filed(draft("Ancillary Justice", "Ann Leckie", "2013"))
-    assert(Shelf.books.map { |book| book.year } == [2013, 1965])
+    let shelf = Shelf.opened([])
+    shelf.filed(dune()).try
+    shelf.filed(draft("Ancillary Justice", "Ann Leckie", "2013")).try
+    assert(shelf.matching("").try.map { |book| book.year } == [2013, 1965])
   end
-end
 
-describe("Shelf.matching") do
   it("searches the stored catalogue") do
     scratch("matching")
-    Shelf.filed(dune())
-    Shelf.filed(draft("Emma", "Jane Austen", "1815"))
-    assert(Shelf.matching("austen").map { |book| book.title } == ["Emma"])
-    assert(Shelf.matching("").count == 2)
+    let shelf = Shelf.opened([])
+    shelf.filed(dune()).try
+    shelf.filed(draft("Emma", "Jane Austen", "1815")).try
+    assert(shelf.matching("austen").try.map { |book| book.title } == ["Emma"])
+    assert(shelf.matching("").try.count == 2)
   end
 end
 
 describe("Shelf.rewritten") do
   it("stores the change and returns the stored book") do
     scratch("rewritten")
-    let id = Shelf.filed(dune())
-    let saved = Shelf.rewritten(id, draft("Dune Messiah", "Frank Herbert", "1969"))
+    let shelf = Shelf.opened([])
+    let id = shelf.filed(dune()).try
+    let saved = shelf.rewritten(id, draft("Dune Messiah", "Frank Herbert", "1969")).try
     assert(saved.map { |book| book.title } == Just("Dune Messiah"))
-    assert(Shelf.find(id).map { |book| book.year } == Just(1969))
+    assert(shelf.find(id).try.map { |book| book.year } == Just(1969))
   end
 
   it("returns None for an unknown id and changes nothing") do
     scratch("rewritten-unknown")
-    Shelf.filed(dune())
-    assert(Shelf.rewritten(99.as(BookId), draft("X", "Y", "2000")).none?)
-    assert(Shelf.books.count == 1)
+    let shelf = Shelf.opened([])
+    shelf.filed(dune()).try
+    assert(shelf.rewritten(99.as(BookId), draft("X", "Y", "2000")).try.none?)
+    assert(shelf.matching("").try.count == 1)
   end
 end
 
 describe("Shelf.dropped") do
   it("removes the book and says it was there") do
     scratch("dropped")
-    let id = Shelf.filed(dune())
-    assert(Shelf.dropped(id))
-    assert(Shelf.books == [])
+    let shelf = Shelf.opened([])
+    let id = shelf.filed(dune()).try
+    assert(shelf.dropped(id).try)
+    assert(shelf.matching("").try == [])
   end
 
   it("says nothing was there for an unknown id") do
     scratch("dropped-unknown")
-    assert(Shelf.dropped(99.as(BookId)).falsy?)
+    let shelf = Shelf.opened([])
+    assert(shelf.dropped(99.as(BookId)).try.falsy?)
   end
 end
 
 describe("Shelf.lent") do
   it("lends a book out and takes it back") do
     scratch("lent")
-    let id = Shelf.filed(dune())
-    assert(Shelf.lent(id, true).map { |book| book.borrowed? } == Just(true))
-    assert(Shelf.find(id).map { |book| book.borrowed? } == Just(true))
-    assert(Shelf.lent(id, false).map { |book| book.borrowed? } == Just(false))
+    let shelf = Shelf.opened([])
+    let id = shelf.filed(dune()).try
+    assert(shelf.lent(id, true).try.map { |book| book.borrowed? } == Just(true))
+    assert(shelf.find(id).try.map { |book| book.borrowed? } == Just(true))
+    assert(shelf.lent(id, false).try.map { |book| book.borrowed? } == Just(false))
   end
 
   it("returns None for an unknown id") do
     scratch("lent-unknown")
-    assert(Shelf.lent(99.as(BookId), true).none?)
+    let shelf = Shelf.opened([])
+    assert(shelf.lent(99.as(BookId), true).try.none?)
   end
 end

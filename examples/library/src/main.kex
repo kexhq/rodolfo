@@ -11,7 +11,8 @@
 #
 # Five modules divide the work: `catalog/` holds the books and the rules
 # about them (pure), `mock_data.kex` is the catalogue a fresh install starts
-# from, `shelf.kex` keeps them in a file between requests, `library/views.kex`
+# from, `shelf.kex` is a `serving` process that holds them between requests
+# (backed by a file, so a restart doesn't lose the catalogue), `library/views.kex`
 # (module `Library.Views` — namespaced so it doesn't collide with another
 # example's own `Views` module in the same `tey` workspace) renders escaped
 # HTML, and this file maps HTTP onto the rest.
@@ -55,10 +56,10 @@ let notice(env: Context) -> String? do
 end
 
 main do
-  let stocked = Shelf.opened(MockData.MOCK_BOOKS)
+  let shelf = Shelf.opened(MockData.MOCK_BOOKS)
   let port = ENV.get("PORT").flatMap { |text| text.to(Integer) }.or(3000)
   let bindHost = ENV.get("HOST").or("127.0.0.1")
-  IO.printLine("Rodolfo Library: ${stocked.count} books in ${Shelf.catalogueFile}")
+  IO.printLine("Rodolfo Library: ${shelf.matching("").try.count} books in ${Shelf.catalogueFile}")
   if bindHost == "0.0.0.0"
     IO.printLine("Listening on http://localhost:${port}/books")
     IO.printLine("On this network: http://<this machine>:${port}/books")
@@ -79,7 +80,7 @@ main do
 
     get "/books" do |env|
       let term = queried(env, "q")
-      Library.Views.index(Shelf.matching(term), term, notice(env))
+      Library.Views.index(shelf.matching(term).try, term, notice(env))
     end
 
     get "/books/new" do
@@ -90,7 +91,7 @@ main do
       let draft = submitted(env)
       let errors = draft.validate
       if errors.empty?
-        let id = Shelf.filed(draft)
+        let id = shelf.filed(draft).try
         redirectTo("/books/${id}?notice=created")
       else
         Response.HTML {
@@ -101,13 +102,13 @@ main do
     end
 
     get "/books/:id" do |env|
-      withBook(Shelf.find(bookId(env))) do |book|
+      withBook(shelf.find(bookId(env)).try) do |book|
         Library.Views.show(book, notice(env))
       end
     end
 
     get "/books/:id/edit" do |env|
-      withBook(Shelf.find(bookId(env))) do |book|
+      withBook(shelf.find(bookId(env)).try) do |book|
         Library.Views.form("Edit this book", "/books/${book.id}", book.drafted, [])
       end
     end
@@ -119,10 +120,10 @@ main do
       let id = bookId(env)
       let draft = submitted(env)
       match draft.validate do
-        [] => withBook(Shelf.rewritten(id, draft)) do |book|
+        [] => withBook(shelf.rewritten(id, draft).try) do |book|
           redirectTo("/books/${book.id}?notice=updated")
         end
-        errors => withBook(Shelf.find(id)) do |book|
+        errors => withBook(shelf.find(id).try) do |book|
           Response.HTML {
             status: 422,
             body: "${Library.Views.form("Edit this book", "/books/${book.id}", draft, errors)}"
@@ -132,7 +133,7 @@ main do
     end
 
     post "/books/:id/delete" do |env|
-      return redirectTo("/books?notice=deleted") if Shelf.dropped(bookId(env))
+      return redirectTo("/books?notice=deleted") if shelf.dropped(bookId(env)).try
 
       Response.HTML {
         status: 404,
@@ -143,20 +144,20 @@ main do
     # Lending either way sends the reader back to the catalogue rather than to
     # the book they just handled, so the next thing on screen is the shelf.
     post "/books/:id/borrow" do |env|
-      withBook(Shelf.lent(bookId(env), true)) do |_|
+      withBook(shelf.lent(bookId(env), true).try) do |_|
         redirectTo("/books?notice=lent")
       end
     end
 
     post "/books/:id/return" do |env|
-      withBook(Shelf.lent(bookId(env), false)) do |_|
+      withBook(shelf.lent(bookId(env), false).try) do |_|
         redirectTo("/books?notice=returned")
       end
     end
 
     # The same delete for `curl -X DELETE`: no page to render, so 204.
     delete "/books/:id" do |env|
-      match Shelf.dropped(bookId(env)) do
+      match shelf.dropped(bookId(env)).try do
         true => Response.Empty {}
         false => Response.Empty { status: 404 }
       end

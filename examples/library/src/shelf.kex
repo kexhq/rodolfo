@@ -1,13 +1,18 @@
-# Where the catalogue lives between requests: one tab-separated file, read
-# before a change and written after it. Every rule about the books stays in
-# `catalog/`; this module only moves them to and from the disk.
+# Where the catalogue lives between requests: a `serving` process holding the
+# books in memory, backed by one tab-separated file so the catalogue outlasts
+# the server. Every rule about the books stays in `catalog/`; this module only
+# moves them to and from the process and the disk.
 #
-# A `serving` process would be the natural home for shared state, and this
-# example started there — but Kex 0.4.0-beta does not export a program's slot
-# functions once that program depends on `Net.HTTP`, so a Rodolfo app cannot
-# call its own slots yet. A file is the next simplest store, and it outlasts
-# the server. Two writes that overlap can lose one of the changes, which a
-# one-reader catalogue never notices and a busy one would.
+# A `serving` process is the natural home for shared state, but Kex
+# 0.4.0-beta didn't export a program's slot functions once the program also
+# depended on `Net.HTTP` and the `serving` block sat in anything but the
+# entrypoint module (kexhq/kex#376/#377), so this started as a plain file: a
+# read before every change, a write after it. That workaround is gone now
+# that #377 and its follow-on gaps (kexhq/kex#384, and a `Server<T>` module-
+# prefix bug found chasing it) are fixed — the process also buys what the
+# file alone couldn't: two changes that overlap can no longer lose one of
+# them, since they're serialized through the one process that owns the
+# state, not raced against the disk directly.
 module Shelf
 
 using Catalog.Book, only: [Book, BookId]
@@ -19,68 +24,70 @@ using Catalog.Draft, only: [Draft]
 catalogueFile : String
 foul catalogueFile = ENV.get("LIBRARY_FILE").or("books.tsv")
 
-# Writes the opening catalogue, unless there is one already. Returns the books
-# on the shelf either way.
-opened : [Draft] -> [Book]
+record Catalogue do
+  books : [Book] = []
+end
+
+serving Catalogue do
+  # The books matching a search term; every book when the term is empty, so
+  # `matching("")` doubles as "every book, newest first" — every call site
+  # here already takes a real argument regardless.
+  slot matching(term: String) -> Reply<[Book]> = { reply: @books.matching(term) }
+
+  # One book, or `None` when no book carries that id.
+  slot find(id: BookId) -> Reply<Book?> = { reply: @books.carrying(id) }
+
+  # Files a validated draft and returns the id it was given.
+  foul slot filed(draft: Draft) -> Reply<BookId> do
+    let id = @books.nextId
+    new.books = @books.added(id, draft)
+    persisted(new.books)
+    return { new, reply: id }
+  end
+
+  # Rewrites a book from a validated draft, returning the stored result, or
+  # `None` when the id is unknown.
+  foul slot rewritten(id: BookId, draft: Draft) -> Reply<Book?> do
+    new.books = @books.edited(id, draft)
+    persisted(new.books)
+    return { new, reply: new.books.carrying(id) }
+  end
+
+  # Removes a book, returning whether there was one to remove.
+  foul slot dropped(id: BookId) -> Reply<Bool> do
+    let existed = @books.carrying(id).set?
+    new.books = @books.without(id)
+    persisted(new.books)
+    return { new, reply: existed }
+  end
+
+  # Lends a book out or takes it back, returning the stored book.
+  foul slot lent(id: BookId, borrowed?: Bool) -> Reply<Book?> do
+    new.books = @books.lending(id, borrowed?)
+    persisted(new.books)
+    return { new, reply: new.books.carrying(id) }
+  end
+end
+
+# Spawns the shelf, seeded from the catalogue file if there is one, or from
+# `drafts` (and a fresh file written from them) if there isn't.
+opened : [Draft] -> Server<Catalogue>
 foul opened(drafts) do
   let fresh? = FS.File.exists?(catalogueFile).falsy?
-  fresh? then stocked(drafts) else books
+  let initial = fresh? then stocked(drafts) else decoded(FS.File.read(catalogueFile).or("")).sorted
+  Process.spawn(Catalogue { books: initial })
 end
 
-# Every book, newest first.
-books : [Book]
-foul books = decoded(FS.File.read(catalogueFile).or("")).sorted
+private do
+  # Replaces the catalogue file with `books`.
+  persisted : [Book] -> Bool
+  foul persisted(books) = FS.File.write(catalogueFile, books.encoded)
 
-# The books matching a search term; every book when the term is empty.
-matching : String -> [Book]
-foul matching(term) = decoded(FS.File.read(catalogueFile).or("")).matching(term)
-
-# One book, or `None` when no book carries that id.
-find : BookId -> Book?
-foul find(id) = books.carrying(id)
-
-# Files a validated draft and returns the id it was given.
-filed : Draft -> BookId
-foul filed(draft) do
-  let current = books
-  let id = current.nextId
-  kept(current.added(id, draft))
-  id
-end
-
-# Rewrites a book from a validated draft, returning the stored result, or
-# `None` when the id is unknown.
-rewritten : BookId -> Draft -> Book?
-foul rewritten(id, draft) do
-  let current = books.edited(id, draft)
-  kept(current)
-  current.carrying(id)
-end
-
-# Removes a book, returning whether there was one to remove.
-dropped : BookId -> Bool
-foul dropped(id) do
-  let current = books
-  kept(current.without(id))
-  current.carrying(id).set?
-end
-
-# Lends a book out or takes it back, returning the stored book.
-lent : BookId -> Bool -> Book?
-foul lent(id, borrowed?) do
-  let current = books.lending(id, borrowed?)
-  kept(current)
-  current.carrying(id)
-end
-
-# Replaces the catalogue file with `books`.
-kept? : [Book] -> Bool
-foul kept(books) = FS.File.write(catalogueFile, books.encoded)
-
-# Writes a catalogue built from `drafts`, numbering them from one.
-stocked : [Draft] -> [Book]
-foul stocked(drafts) do
-  let seeded = drafts.reduce([]) { |shelved, draft| shelved.added(shelved.nextId, draft) }
-  kept(seeded)
-  seeded.sorted
+  # A catalogue built from `drafts`, numbered from one and written to disk.
+  stocked : [Draft] -> [Book]
+  foul stocked(drafts) do
+    let seeded = drafts.reduce([]) { |shelved, draft| shelved.added(shelved.nextId, draft) }
+    persisted(seeded)
+    seeded.sorted
+  end
 end
