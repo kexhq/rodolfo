@@ -15,6 +15,60 @@ tey 0.2.0 (Kex 0.3.4, 86c221b)
 Both from `/opt/homebrew/bin`. Compiler sources referenced by path are in a
 checkout of `kexhq/kex` next to this repository (`../kex`).
 
+## Re-verified 2026-09-20, against `kexhq/kex#386` (`9e78011`, not yet merged)
+
+One more commit landed (`9e78011`, "Add new spec and fix") — a follow-up to
+`47a2009` that also covers the *qualified* form of the same zero-arg-binding
+bug (`Module.name(args)` called from outside the module, not just from
+within it). Not something this repo's own code needed, but confirms the fix
+is broader than the one shape found here.
+
+This round checked something the others hadn't: whether `tey build`/`tey
+test` — the actual commands CI runs, via a real `tey-run` built from this
+kex checkout — pass for the **whole workspace**, not just `examples/chat`
+checked in isolation with `kex -C`/`kex -R`/`kex --compile`. They mostly do,
+with two findings:
+
+**`tey build` succeeds for every package** — `rodolfo`, all seven
+`examples/*`, no errors. This is the first time the exact commands CI runs
+were used, rather than approximating them with direct `kex` invocations.
+
+**`tey test` surfaced a second instance of kexhq/kex#383's `close`
+collision, outside `examples/chat` entirely.** `spec/rodolfo.spec.kex` — not
+touched by anything in this branch — fails to compile:
+
+```
+spec/rodolfo.spec.kex:716:17: error: `close` expects argument 1 to be Client, but got Connection
+
+close : Client -> Result<ClientCloseReport, NetError>
+close : FileHandle<A, B> -> Void
+close : TCPConnection -> Void
+close : TCPListener -> Void
+```
+
+Same root cause as #383, a different colliding pair: `Connection` (from
+`WebSocket.connect`, used in this spec's own WebSocket tests) isn't
+explicitly imported, so `.close` falls back to whichever *other*
+`close`-bearing type happens to be in scope — here `Client` (from
+`Net.HTTP`, already imported two lines up), not `FileHandle` this time.
+Fixed the same way as `examples/chat/src/main.kex`: added `Connection` to
+`spec/rodolfo.spec.kex`'s own `using Net.HTTP.WebSocket, only: [...]`.
+Not specific to this branch's chat work, but without it `tey test` can't
+compile at all once kex's `main` picks up #386 — worth carrying in this
+branch regardless, since nothing else was going to catch it.
+
+With that fixed, `tey test` for the `rodolfo` package itself: **49 of 50
+pass.** The one failure is kexhq/kex#27 (`URI`'s prebuilt beam shadowing the
+compiled one at run time, this file's own entry — see below), triggered for
+the first time in a `tey test` context by "decodes a query field the way a
+browser submits a GET form": `expected [and tools], got Internal Server
+Error`, the exact shape #27 already documented. Pre-existing, no upstream
+issue filed, unrelated to anything in this branch or to #386. Every
+downstream `examples/*` package's own tests are skipped by `tey test`
+whenever the `rodolfo` package itself reports any failure (cascading skip,
+not a per-package problem) — so #27 alone is what's between this and a
+fully green `tey test` right now.
+
 ## Re-verified 2026-09-20, against `kexhq/kex#386` (`47a2009`, not yet merged)
 
 One more commit landed on top of the round documented in the section below
@@ -719,6 +773,15 @@ one `html$` literal instead of being converted to `${error}`; a real bug
 of my own, unrelated to the module collision, fixed alongside it.
 
 ### 27. A `using` of a stdlib module stages the toolchain's prebuilt beam over the one the build just compiled — every extended method on that name becomes `undef`
+
+Still reproduces, in a new context: `tey test` for the root `rodolfo`
+package (2026-09-20, against `kexhq/kex#386` at `9e78011`) — "decodes a
+query field the way a browser submits a GET form" fails
+`expected [and tools], got Internal Server Error`, the same shape as the
+`examples/chat` case below. The only remaining failure once
+kexhq/kex#383's collision (a different one, in `spec/rodolfo.spec.kex`
+itself — see this file's own 2026-09-20 section up top) was fixed. Still no
+upstream issue filed.
 
 Found 2026-09-19 in `examples/chat`, which answered a plain `GET /` with
 `500 Internal Server Error` and logged
