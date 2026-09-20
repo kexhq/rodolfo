@@ -349,7 +349,7 @@ tey build     # compile src/ into ebin/
 tey test      # run spec/*.spec.kex on the BEAM
 ```
 
-Rodolfo needs Kex `>= 0.4.0-beta.2`; pick a toolchain with `tey kex install`.
+Rodolfo needs Kex `>= 0.4.0-beta.3`; pick a toolchain with `tey kex install`.
 The floor is not cosmetic: before that release an application function could
 displace a library's `private do` helper of the same name and arity, which
 silently disabled the escaping behind `html$`. `spec/rodolfo.spec.kex` defines
