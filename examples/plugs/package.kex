@@ -3,7 +3,7 @@
 package "plugs" do
   version("0.1.0")
   description("Rodolfo example: composable request/response plugs")
-  kex(">= 0.4.0-beta")
+  kex(">= 0.4.0-beta.3")
   license("MIT")
 
   entrypoint("src/main.kex")

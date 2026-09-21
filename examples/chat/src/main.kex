@@ -7,17 +7,13 @@
 # Run this, then open http://localhost:3000/ in two or more browser tabs (or
 # two different browsers) — enter "let-me-in" as the room password and a
 # different name in each, and chat between them. The two pages themselves
-# live in `chat/views.kex` — see there for how they're built.
-#
-# `Room` is declared right here in the entrypoint module on purpose — a
-# `serving` process whose slots are called from a route handler only works
-# reliably when the `serving` block sits in the entrypoint, not an imported
-# module (see docs/kex-issues.md #1/#2 in the main Rodolfo checkout).
+# live in `chat/views.kex`, and the room's shared state in `chat/room.kex` —
+# see there for how each is built.
 using Rodolfo
-using Net, only: [NetError, Timeout]
-using Net.HTTP.WebSocket, only: [Message, Text, BinaryMessage, CloseMessage]
+using Net.HTTP.WebSocket, only: [Connection, Message, Text, BinaryMessage, CloseMessage]
 using Chat.Views
 using Chat.Protocol
+using Chat.Room
 
 # Deliberately simple: one shared password for the whole room, checked
 # against a query parameter on both the login page and the WebSocket URL
@@ -26,52 +22,8 @@ using Chat.Protocol
 roomToken : String
 let roomToken = "let-me-in"
 
-# Every connection, by name — a name doubles as the room's idea of "who's
-# here", so `join` can refuse a name already in use and the client can be
-# shown a live roster, not just a scrolling log. `broadcast` doubles as the
-# only place a dead connection gets noticed: a socket whose `send` fails —
-# the peer closed without a clean handshake, most likely — is dropped from
-# the room rather than tracked down by a separate message.
-record Room do
-  users : [(String, Connection)] = []
-end
-
-serving Room do
-  # Checked from the login page itself, before ever reaching `/chat` — a
-  # nicer failure than "you connected, then got kicked off" for the common
-  # case. `join` re-checks (and is the one that actually matters): a second
-  # connection could pick the same name in the gap between this check and
-  # the next request, and only `join` runs atomically with the join itself.
-  slot taken?(name: String) -> Reply<Bool> do
-    return { reply: @users.any? { |user| match user do (existing, _) => existing == name end } }
-  end
-
-  # `None` means the name is already taken and nothing changed; `Just`
-  # carries the roster (every name, this one included) to announce.
-  slot join(name: String, socket: Connection) -> Reply<[String]?> do
-    let taken = @users.any? { |user| match user do (existing, _) => existing == name end }
-    if taken
-      return { reply: None }
-    else
-      new.users = [(name, socket) | @users]
-      return { new, reply: Just(new.users.map { |user| match user do (existing, _) => existing end }) }
-    end
-  end
-
-  # The roster after removal, to announce the same way `join` does.
-  slot leave(name: String) -> Reply<[String]> do
-    new.users = @users.filter { |user| match user do (existing, _) => existing != name end }
-    return { new, reply: new.users.map { |user| match user do (existing, _) => existing end } }
-  end
-
-  slot broadcast(text: String) -> Void do
-    new.users = @users.filter { |user| match user do (_, socket) => socket.send(Text(text)).ok? end }
-    return new
-  end
-end
-
 main do
-  let room = Process.spawn(Room {})
+  let room = Process.spawn(Chat.Room.Room {})
 
   let site = Rodolfo.router do
     get "/" do |env|
@@ -114,30 +66,22 @@ main do
           Just(roster) => do
             room.broadcast(Chat.Protocol.systemLine("${name} joined"))
             room.broadcast(Chat.Protocol.rosterLine(roster))
-            # `receiveMessage` is matched as the `Result` it is, rather than
-            # `.try`-ed, because the two ways it fails need opposite answers.
+            # `receiveMessage` blocks for as long as the peer stays connected
+            # — an idle client sends nothing for minutes at a time, which is
+            # the ordinary case for a chat room, not a timeout (kexhq/kex#381,
+            # fixed; docs/kex-issues.md #28).
             #
-            # A `Timeout` is not a disconnect at all: the connection process
-            # answers a receive with its own 31-second call timeout, so a
-            # client who simply hasn't typed in half a minute — which is most
-            # of them, most of the time — reports one while still perfectly
-            # connected. Treating it as a disconnect is what made the room
-            # drop people at random (docs/kex-issues.md #28); going back
-            # around the loop is what keeps them here.
-            #
-            # Every other error is a real disconnect. An abrupt one — a
-            # dropped network, a closed laptop lid — fails the receive rather
-            # than ever handing back a `CloseMessage`, and leaving the loop on
-            # it runs the same cleanup a clean close does. Skipping that
-            # cleanup would leave a phantom entry in `Room` forever: the name
-            # stays "taken" until some later `broadcast` happens to try this
-            # dead socket and prune it.
+            # A real disconnect still fails the receive rather than ever
+            # handing back a `CloseMessage` — a dropped network, a closed
+            # laptop lid — and leaving the loop on it runs the same cleanup a
+            # clean close does. Skipping that cleanup would leave a phantom
+            # entry in `Room` forever: the name stays "taken" until some later
+            # `broadcast` happens to try this dead socket and prune it.
             loop do
               match socket.receiveMessage do
                 Ok(Text(text)) => room.broadcast(Chat.Protocol.chatLine(name, text))
                 Ok(CloseMessage(_, _)) => break
                 Ok(_) => Void
-                Error(NetError { kind: Timeout }) => Void
                 Error(_) => break
               end
             end

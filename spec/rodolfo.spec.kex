@@ -14,7 +14,7 @@
 # them (`Text` collides with `Response.Text`).
 using Rodolfo
 using Net.HTTP, only: [Client, Server, ServerOptions, Headers, Context, Request, Status]
-using Net.HTTP.WebSocket, only: [WebSocket, Message, Text, BinaryMessage, CloseMessage]
+using Net.HTTP.WebSocket, only: [WebSocket, Connection, Message, Text, BinaryMessage, CloseMessage]
 using Net.Socket, only: [TCP]
 
 # A running Rodolfo router on an ephemeral loopback port, plus a pooled client
