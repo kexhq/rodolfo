@@ -75,14 +75,15 @@ be re-run, not just quoted.
 
 ```sh
 cd examples/chat_perf/bench
-N=1000 SOAK=12 SENDERS=20 PAYLOAD=1024 PACED=10 python3 saturate.py
+N=1000 SOAK=12 SENDERS=20 PAYLOAD=1024 PACED=10 ruby run-wload.rb
 # or, with wave joins and per-client roster sync:
-N=1000 WAVE=100 WAVEGAP=500 SYNC=1 SOAK=12 SENDERS=20 PAYLOAD=1024 python3 saturate.py
+N=1000 WAVE=100 WAVEGAP=500 SYNC=1 SOAK=12 SENDERS=20 PAYLOAD=1024 ruby run-wload.rb
 ```
 
-`saturate.py` wraps server start, CPU sampling (server and loader
+`run-wload.rb` wraps server start, CPU sampling (server and loader
 separately), the run, and teardown; every knob is an env var (`APP`,
 `PORT`, `N`, `PROTO`, `SENDERS`, `FLOOD`/`SOAK`, `PAYLOAD`, `PACED`,
-`WAVE`, `WAVEGAP`, `SYNC`). Needs unsandboxed loopback networking.
+`WAVE`, `WAVEGAP`, `SYNC`, `TIMEOUT`). Needs unsandboxed loopback
+networking and a Ruby with stdlib `json`.
 `escript wload.erl --selftest` verifies the wire codec and the stats
 pipeline with no sockets involved.
