@@ -279,7 +279,7 @@ type Entry = Definition | WsDefinition | PlugEntry | Scope
 
 # A flattened route: a scope tree collapses to one of these per
 # `Definition`, its plug stack accumulated top-down and its path prefixed by
-# every scope it sat inside — see `flattened`.
+# every scope it sat inside — see `declaredRoutes`.
 record Flat do
   method : String
   path : String
@@ -679,35 +679,23 @@ private do
   # Foul because the handlers it wraps serve requests, and a closure calling
   # foul code makes its enclosing context foul.
   compileRoutes : [Entry] -> Net.HTTP.Router
-  foul compileRoutes(entries) = Net.HTTP.Router {
-    routes: flattened(entries, "", []).map(~compileFlat) + wsFlattened(entries, "").map(~compileWs)
-  }
+  foul compileRoutes(entries) = Net.HTTP.Router { routes: declaredRoutes(entries, "", []) }
 
-  # Collapses a scope tree into one `Flat` per `Definition`.
-  flattened : [Entry] -> String -> [Plug] -> [Flat]
-  let flattened(entries, prefix, inherited) do
+  # Every route in declaration order, scopes expanded in place: the first
+  # route that matches a request wins, a `ws` route included, so a `ws`
+  # declared before a catch-all `get "/*path"` still gets its handshake.
+  declaredRoutes : [Entry] -> String -> [Plug] -> [Route]
+  foul declaredRoutes(entries, prefix, inherited) do
     let stack = inherited + plugsOf(entries)
     routesAndScopesOf(entries).flatMap { |entry|
       match entry do
         Definition { method, path, handler } =>
-          [Flat { method: method, path: joinedPath(prefix, path), plugs: stack, handler: handler }]
-        Scope { prefix: childPrefix, children } => flattened(children, joinedPath(prefix, childPrefix), stack)
-        WsDefinition { path, handler } => []
+          [compileFlat(Flat { method: method, path: joinedPath(prefix, path), plugs: stack, handler: handler })]
+        WsDefinition { path, handler } => [compileWs(WsDefinition { path: joinedPath(prefix, path), handler: handler })]
+        Scope { prefix: childPrefix, children } => declaredRoutes(children, joinedPath(prefix, childPrefix), stack)
       end
     }
   end
-
-  # Collapses a scope tree into one `WsDefinition` per `ws` declaration, path
-  # prefixed by every scope it sat inside. No plug stack: WebSocket routes
-  # don't take part in it — see `ws`'s own doc comment.
-  wsFlattened : [Entry] -> String -> [WsDefinition]
-  let wsFlattened(entries, prefix) = routesAndScopesOf(entries).flatMap { |entry|
-    match entry do
-      WsDefinition { path, handler } => [WsDefinition { path: joinedPath(prefix, path), handler: handler }]
-      Scope { prefix: childPrefix, children } => wsFlattened(children, joinedPath(prefix, childPrefix))
-      Definition { method, path, handler } => []
-    end
-  }
 
   plugsOf : [Entry] -> [Plug]
   let plugsOf(entries) = entries.flatMap { |entry|
