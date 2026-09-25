@@ -1,0 +1,25 @@
+# Chat_perf's two pages — same shape and same escaping contract as
+# `examples/chat`'s `Chat.Views` (that contract's rationale lives there and
+# in `spec/views.spec.kex` here); only the module name differs, for the same
+# sibling-collision reason (docs/kex-issues.md #26).
+module ChatPerf.Views
+
+using JSON
+using Rodolfo, only: [Safe, safe]
+
+let renderLogin = Template.html(Kex.embed("login.html.ket"))
+
+login : String -> Safe
+let login(error) = safe(renderLogin(error))
+
+let renderChat = Template.html(Kex.embed("chat.html.ket"))
+
+chat : String -> String -> Safe
+let chat(name, socketPath) = safe(renderChat(name, jsLiteral(name), jsLiteral(socketPath)))
+
+# A JS string literal for a `<script>` hole: JSON, with the two characters
+# that could end the element escaped the way JavaScript, not HTML, spells
+# them — identical to the baseline's helper, unchanged because the escaping
+# problem is unchanged.
+jsLiteral : String -> String
+let jsLiteral(value) = JSON.stringify(value).replace("<", "\\u003C").replace(">", "\\u003E")

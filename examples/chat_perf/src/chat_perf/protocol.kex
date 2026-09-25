@@ -1,0 +1,89 @@
+# The line shapes the room and the browser agree on — the perf variant's
+# half of the contract `examples/chat`'s `Chat.Protocol` states.
+#
+# The load-bearing difference: there is no roster broadcast. A member's join
+# or leave is a one-name delta (`$join:`/`$leave:`) to everyone else, and the
+# full list is something a client asks for, a page at a time (`$roster:<n>`
+# up, `$users:<page>/<pages>:` back), so a join costs O(1) bytes per existing
+# member instead of shipping the whole room to everyone.
+#
+# Same caveat as the original wire format, and for the same reason: the lines
+# are told apart by prefix, and a display name is just a query parameter, so a
+# name that *looks* like a prefix reaches the page looking like that kind of
+# line. Nothing is injected either way — the client builds every line with
+# `textContent` — but a real protocol would tag each line rather than trust a
+# prefix. Kept identical to the original so the two examples stay comparable.
+module ChatPerf.Protocol
+
+# Names per roster page — the only knob of the pagination, in one place.
+rosterPageSize : Integer
+let rosterPageSize = 50
+
+# One page of the room's members, as the answer to a `$roster:<page>` request.
+#
+# @param page [Integer] which page this is, counting from 1
+# @param pages [Integer] how many pages the current roster has
+# @param names [[String]] this page's names, in the room's canonical order
+# @return [String] the `$users:<page>/<pages>:` line
+#
+# @example
+#   ChatPerf.Protocol.rosterPageLine(1, 2, ["Ada", "Bob"])   # => "$users:1/2:Ada,Bob"
+rosterPageLine : Integer -> Integer -> [String] -> String
+let rosterPageLine(page, pages, names) = "$users:${page}/${pages}:${names.join(",")}"
+
+# A member joined — the delta everyone else applies to their own copy of the
+# roster.
+#
+# @param name [String] who joined
+# @return [String] the `$join:` line
+#
+# @example
+#   ChatPerf.Protocol.joinLine("Ada")   # => "$join:Ada"
+joinLine : String -> String
+let joinLine(name) = "$join:${name}"
+
+# A member left — the delta everyone else applies.
+#
+# @param name [String] who left
+# @return [String] the `$leave:` line
+#
+# @example
+#   ChatPerf.Protocol.leaveLine("Ada")   # => "$leave:Ada"
+leaveLine : String -> String
+let leaveLine(name) = "$leave:${name}"
+
+# Something that happened to the room rather than something a person said.
+#
+# @param text [String] the event, in prose
+# @return [String] the `* ` line to broadcast
+#
+# @example
+#   ChatPerf.Protocol.systemLine("Ada joined")   # => "* Ada joined"
+systemLine : String -> String
+let systemLine(text) = "* ${text}"
+
+# Something a person said, attributed to them.
+#
+# @param name [String] the sender's display name
+# @param text [String] what they typed
+# @return [String] the `name: text` line
+#
+# @example
+#   ChatPerf.Protocol.chatLine("Ada", "hello")   # => "Ada: hello"
+chatLine : String -> String -> String
+let chatLine(name, text) = "${name}: ${text}"
+
+# Recognizes a client's request for a roster page: `$roster:3` asks for page
+# 3. The whole `$`-prefixed namespace is reserved for control traffic — a
+# chat message that happens to start with `$roster:` is swallowed by the
+# server rather than broadcast, which the page's composer makes unlikely and
+# this function makes explicit.
+#
+# @param text [String] a message received from a client
+# @return [Integer?] the page asked for, or None if this is not a request
+#
+# @example
+#   ChatPerf.Protocol.parseRosterRequest("$roster:2")   # => Just(2)
+#   ChatPerf.Protocol.parseRosterRequest("hi")          # => None
+parseRosterRequest : String -> Integer?
+let parseRosterRequest(text) = if text.startsWith?("$roster:") then text.drop(8).to(Integer) else None end
