@@ -1,0 +1,98 @@
+# The wire format, checked without a server: every line the room emits is a
+# pure function of what happened, and the page's JS dispatches on the prefix
+# alone — a change here that `views.kex`'s page doesn't follow silently turns
+# a roster page into a chat line in the log, which is exactly what these
+# cases catch. The perf variant's additions are the deltas and the paginated
+# roster answer, so they get the same treatment the baseline gave its one
+# roster line.
+using ChatPerf.Protocol
+
+describe("ChatPerf.Protocol.rosterPageLine") do
+  it("carries which page of how many, then that page's names") do
+    assert(ChatPerf.Protocol.rosterPageLine(1, 3, ["Ada", "Bob"]) == "$users:1/3:Ada,Bob")
+  end
+
+  it("says an empty page with the prefix and nothing after the last colon") do
+    assert(ChatPerf.Protocol.rosterPageLine(2, 2, []) == "$users:2/2:")
+  end
+
+  it("keeps a single name alone, with no trailing separator") do
+    assert(ChatPerf.Protocol.rosterPageLine(1, 1, ["Ada"]) == "$users:1/1:Ada")
+  end
+
+  it("starts with the prefix the page's JS splits on") do
+    assert(ChatPerf.Protocol.rosterPageLine(1, 1, ["Ada"]).startsWith?("$users:"))
+  end
+end
+
+describe("ChatPerf.Protocol.joinLine") do
+  it("carries exactly one name, not the roster") do
+    assert(ChatPerf.Protocol.joinLine("Ada") == "$join:Ada")
+  end
+
+  it("cannot be mistaken for a roster page") do
+    assert(ChatPerf.Protocol.joinLine("Ada").startsWith?("$users:").falsy?)
+  end
+end
+
+describe("ChatPerf.Protocol.leaveLine") do
+  it("carries exactly one name, not the roster") do
+    assert(ChatPerf.Protocol.leaveLine("Bob") == "$leave:Bob")
+  end
+
+  it("is not the join delta") do
+    assert(ChatPerf.Protocol.leaveLine("Ada") != ChatPerf.Protocol.joinLine("Ada"))
+  end
+end
+
+describe("ChatPerf.Protocol.parseRosterRequest") do
+  it("recognizes a page request and says which page") do
+    assert(ChatPerf.Protocol.parseRosterRequest("$roster:3") == Just(3))
+  end
+
+  it("recognizes page one, so the client's bootstrap is not special-cased") do
+    assert(ChatPerf.Protocol.parseRosterRequest("$roster:1") == Just(1))
+  end
+
+  it("does not treat a chat message as a request") do
+    assert(ChatPerf.Protocol.parseRosterRequest("hello").falsy?)
+  end
+
+  it("does not guess a page from a malformed request") do
+    assert(ChatPerf.Protocol.parseRosterRequest("$roster:soon").falsy?)
+  end
+end
+
+describe("ChatPerf.Protocol.systemLine") do
+  it("marks a room event with the prefix, not a name") do
+    assert(ChatPerf.Protocol.systemLine("Ada joined") == "* Ada joined")
+  end
+
+  it("cannot be mistaken for a roster page or a delta") do
+    let line = ChatPerf.Protocol.systemLine("Ada left")
+    assert(line.startsWith?("$users:").falsy?)
+    assert(line.startsWith?("$join:").falsy?)
+    assert(line.startsWith?("$leave:").falsy?)
+  end
+end
+
+describe("ChatPerf.Protocol.chatLine") do
+  it("attributes what was said to who said it") do
+    assert(ChatPerf.Protocol.chatLine("Ada", "hello") == "Ada: hello")
+  end
+
+  it("splits on the first separator only, so a message may contain one") do
+    let line = ChatPerf.Protocol.chatLine("Ada", "re: hello")
+    assert(line == "Ada: re: hello")
+    assert(line.split(": ").first == Just("Ada"))
+  end
+
+  # A display name is whatever the login form was given, so a name that
+  # starts with another line's prefix does reach the page looking like that
+  # kind of line — the same known wrinkle as the baseline's format, kept for
+  # comparability; nothing is injected either way, since the client builds
+  # every line with `textContent`.
+  it("keeps a name that looks like a prefix verbatim, prefix and all") do
+    assert(ChatPerf.Protocol.chatLine("$join:Ada", "hi") == "$join:Ada: hi")
+  end
+end

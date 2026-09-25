@@ -1,0 +1,139 @@
+# The room's shared state, rebuilt for scale. Two structural differences from
+# `examples/chat`'s room, both aimed at walls the baseline benchmark hit
+# (docs/baseline-benchmark.md):
+#
+# 1. The room process never touches a socket. Each member gets a writer
+#    process that owns the sending for exactly that member's connection; the
+#    room's `broadcast` is N mailbox casts, not N blocking `socket.send`s.
+#    Fan-out runs in parallel across schedulers, and a socket whose TCP
+#    buffer is full stalls only its own writer — the baseline's join storms
+#    collapsed precisely because one stuck send stalled the whole room.
+#
+# 2. Join and leave announce deltas (`$join:Ada` / `$leave:Ada`), never the
+#    full roster. The baseline shipped the whole room to everyone on every
+#    join — O(N²) bytes over N joins. The full list is pulled, a page at a
+#    time, by whoever wants it (`rosterPage` below, asked from the `ws`
+#    handler on a `$roster:<n>` message).
+#
+# A side effect of (1): a dead connection is no longer pruned by a failed
+# broadcast, because the room is no longer the one sending. Instead a failed
+# send makes the writer close the socket, which fails the connection's own
+# handler out of its `receiveMessage` loop, which calls `leave` — the same
+# path a clean close takes. The room's map is only ever touched by
+# `join`/`leave`, so it never needs the baseline's rebuild-after-broadcast.
+module ChatPerf.Room
+
+using Net.HTTP.WebSocket, only: [Connection, Text]
+
+# What a room member's writer accepts: a line to deliver, or the instruction
+# to stop because the member left.
+type WriterMsg = (:deliver, String) | :close
+
+# The room is the writer registry, keyed by display name. A name doubles as
+# "who's here", exactly as in the baseline — the values just changed from
+# sockets (deliver by sending from the room) to writer processes (deliver by
+# casting, and the writer sends).
+record Room do
+  users : {String: Process<WriterMsg>} = {}
+end
+
+# A member's writer: owns the connection's send side for its whole lifetime.
+#
+# The loop is a named module function, not a local function inside the spawn
+# block: a local `let go() do ... end` there compiles, and then dies at
+# runtime with `Undefined function: go` on its first tail-call when the
+# spawn block is a named function's body — docs/kex-issues.md #29. Each
+# delivered line tail-calls the next receive; a send that fails means the
+# connection is gone: close the socket (which nudges the connection's own
+# handler out of its receive loop and into `leave`) and fall through, ending
+# the loop.
+writerLoop : Connection -> Void
+foul writerLoop(socket) = receive do
+  (:deliver, text) =>
+    if socket.send(Text(text)).ok?
+      writerLoop(socket)
+    else
+      socket.close
+    end
+  :close => Void
+end
+
+startWriter : Connection -> Process<WriterMsg>
+foul startWriter(socket) = spawn do
+  writerLoop(socket)
+end
+
+serving Room do
+  # Checked from the login page, before ever reaching `/chat` — same role as
+  # the baseline's `taken?`, and `join` re-checks atomically for the same
+  # reason.
+  slot taken?(name: String) -> Reply<Bool> do
+    return { reply: @users.has?(name) }
+  end
+
+  # `true` means joined and announced; `false` means the name was taken and
+  # nothing changed. The announcements happen here, inside the slot, so the
+  # map insert and what everyone is told cannot drift apart: everyone (the
+  # newcomer included) hears `* <name> joined`, and everyone *else* applies
+  # the `$join:<name>` delta. The newcomer builds its roster by asking for
+  # pages instead — see `rosterPage`.
+  foul slot join(name: String, socket: Connection) -> Reply<Bool> do
+    if @users.has?(name)
+      return { reply: false }
+    else
+      let writer = startWriter(socket)
+      new.users = @users.put(name, writer)
+      let announced = ChatPerf.Protocol.systemLine("${name} joined")
+      new.users.each { |_, w| w.send((:deliver, announced)) }
+      let delta = ChatPerf.Protocol.joinLine(name)
+      new.users.each do |member, w|
+        if member != name
+          w.send((:deliver, delta))
+        end
+      end
+      return { new, reply: true }
+    end
+  end
+
+  # `true` means the member was there, was removed, and the room was told;
+  # `false` means the name was already gone (a duplicate `leave` — e.g. the
+  # handler's cleanup racing a writer-triggered close — lands here as a
+  # no-op rather than announcing a ghost).
+  slot leave(name: String) -> Reply<Bool> do
+    match @users.get(name) do
+      Just(writer) => do
+        writer.send(:close)
+        new.users = @users.delete(name)
+        let announced = ChatPerf.Protocol.systemLine("${name} left")
+        new.users.each { |_, w| w.send((:deliver, announced)) }
+        let delta = ChatPerf.Protocol.leaveLine(name)
+        new.users.each { |_, w| w.send((:deliver, delta)) }
+        return { new, reply: true }
+      end
+      None => do
+        return { reply: false }
+      end
+    end
+  end
+
+  # The hot path: one cast per member, no socket I/O, no state change — the
+  # map is only ever rebuilt by join/leave, so there is nothing to filter and
+  # nothing to install. Per-member ordering is preserved because every line
+  # enters through this one slot and mailboxes are FIFO.
+  slot broadcast(text: String) -> Void do
+    new.users = @users
+    @users.each { |_, w| w.send((:deliver, text)) }
+    return new
+  end
+
+  # One page of the roster, in canonical (alphabetical) key order, plus how
+  # many pages there are. Asked by a connection's handler when its client
+  # sends `$roster:<n>`; a client collecting every page walks away with the
+  # full list having received N small round trips instead of making the room
+  # push N names to N members.
+  slot rosterPage(page: Integer, per: Integer) -> Reply<([String], Integer)> do
+    let names = @users.keys
+    let pages = if names.count == 0 then 1 else (names.count + per - 1) / per end
+    return { reply: (names.drop((page - 1) * per).take(per), pages) }
+  end
+end
