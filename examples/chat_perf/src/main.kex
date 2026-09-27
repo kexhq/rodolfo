@@ -1,0 +1,92 @@
+# The perf-focused variant of the broadcast chat room: same login form, same
+# display-name-per-connection idea, but a room built not to fall over as it
+# grows. `chat/room.kex` is where the two structural changes live — per-member
+# writer processes and delta join/leave announcements — and
+# docs/baseline-benchmark.md is the "before" measurement that motivated them.
+using Rodolfo
+using Net.HTTP.WebSocket, only: [Connection, Message, Text, BinaryMessage, CloseMessage]
+using ChatPerf.Views
+using ChatPerf.Room
+
+# Deliberately simple, exactly as in the baseline: one shared password for
+# the whole room, checked against a query parameter on both the login page
+# and the WebSocket URL itself.
+roomToken : String
+let roomToken = "let-me-in"
+
+main do
+  let room = Process.spawn(ChatPerf.Room.Room {})
+  let port = ENV.get("PORT").flatMap { |text| text.to(Integer) }.or(3000)
+  let bindHost = ENV.get("HOST").or("127.0.0.1")
+
+  let site = Rodolfo.router do
+    get "/" do |env|
+      let token = env.query("token").or("")
+      let name = env.query("name").or("").trim
+      # Whether the form was submitted at all, not whether either field came
+      # back non-empty — same distinction the baseline's comment draws.
+      let attempted = env.query("token").set? || env.query("name").set?
+      let validCredentials = !token.empty? && token == roomToken && !name.empty?
+      if validCredentials && !room.taken?(name).try
+        # `URI.Form` fully qualified, with no `using URI` above — importing
+        # `URI` displaces the toolchain's prebuilt `Kex.URI.beam` and breaks
+        # `env.query` at runtime (docs/kex-issues.md #27).
+        let query = URI.Form.from([("token", roomToken), ("name", name)]).encode
+        Response.HTML { body: "${ChatPerf.Views.chat(name, "/chat?${query}")}" }
+      else
+        let error = if !attempted then "" else
+          if validCredentials then "\"${name}\" is already in the room — try another name." else
+            "Wrong password, or a name is needed."
+          end
+        end
+        Response.HTML { body: "${ChatPerf.Views.login(error)}" }
+      end
+    end
+
+    ws "/chat" do |env, socket|
+      let token = env.query("token").or("")
+      let name = env.query("name").or("").trim
+      if token != roomToken || name.empty?
+        socket.close
+      elif !room.join(name, socket).try
+        socket.send(Text(ChatPerf.Protocol.systemLine("\"${name}\" is already in this room — try another name."))).try
+        socket.close
+      else
+        # The handler is receive-only: chat lines are handed to the room as
+        # a cast (the room fans out to writers), and a `$roster:<n>` request
+        # is answered right here on this connection's own socket — a single
+        # send on the request path, never a broadcast. Idle clients send
+        # nothing for minutes at a time, which is the ordinary case, not a
+        # timeout (kexhq/kex#381, fixed; docs/kex-issues.md #28).
+        loop do
+          match socket.receiveMessage do
+            Ok(Text(text)) =>
+              match ChatPerf.Protocol.parseRosterRequest(text) do
+                Just(page) => do
+                  let (names, pages) = room.rosterPage(page, ChatPerf.Protocol.rosterPageSize).try
+                  socket.send(Text(ChatPerf.Protocol.rosterPageLine(page, pages, names))).try
+                end
+                None => room.broadcast(ChatPerf.Protocol.chatLine(name, text))
+              end
+            Ok(CloseMessage(_, _)) => break
+            Ok(_) => Void
+            Error(_) => break
+          end
+        end
+        let left = room.leave(name).try
+      end
+    end
+  end
+
+  if bindHost == "0.0.0.0"
+    IO.printLine("Chat room on http://localhost:${port}/ (room password: ${roomToken})")
+    IO.printLine("On this network: http://<this machine>:${port}/")
+    IO.printLine("  address: `ipconfig getifaddr en0` (macOS), `hostname -I` (Linux)")
+  elif bindHost == "127.0.0.1" || bindHost == "localhost"
+    IO.printLine("Chat room on http://localhost:${port}/ (room password: ${roomToken})")
+    IO.printLine("This machine only; HOST=0.0.0.0 opens it to the network.")
+  else
+    IO.printLine("Chat room on http://${bindHost}:${port}/ (room password: ${roomToken})")
+  end
+  site.start(bindHost, port).try
+end

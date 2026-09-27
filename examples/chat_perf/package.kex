@@ -1,0 +1,13 @@
+# The perf-focused sibling of `examples/chat`: same login form, same wire
+# spirit, but built to stay fast as the room grows. A workspace member like
+# every other example, resolving Rodolfo from this checkout.
+package "chat_perf" do
+  version("0.1.0")
+  description("Rodolfo example: a scalable broadcast WebSocket chat room")
+  kex(">= 0.4.0-beta.3")
+  license("MIT")
+
+  entrypoint("src/main.kex")
+
+  tey("rodolfo", workspace: true)
+end

@@ -1,0 +1,72 @@
+---
+params: [error: String]
+---
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Rodolfo Chat</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: -apple-system, system-ui, sans-serif;
+        background: #f3f4f6;
+        color: #111827;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+      .card {
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.08);
+        width: 100%;
+        overflow: hidden;
+      }
+      h1 { margin: 0; }
+      .card { max-width: 340px; padding: 32px; }
+      h1 { font-size: 1.4rem; margin-bottom: 20px; }
+      label { display: block; font-size: 0.85rem; color: #4b5563; margin-bottom: 16px; }
+      input {
+        display: block; width: 100%; margin-top: 6px; padding: 8px 10px;
+        border: 1px solid #d1d5db; border-radius: 6px; font-size: 1rem; box-sizing: border-box;
+      }
+      button {
+        width: 100%; padding: 10px; border: none; border-radius: 6px;
+        background: #4f46e5; color: #fff; font-size: 1rem; cursor: pointer;
+      }
+      button:hover { background: #4338ca; }
+      .error {
+        background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
+        border-radius: 6px; padding: 8px 12px; font-size: 0.85rem; margin-bottom: 16px;
+      }
+      /* Dark mode: `color-scheme: light dark` above lets the browser use its
+         dark defaults (light text, dark controls), but every surface here is
+         a hardcoded light color — without these overrides the light text
+         would sit on the white card and turn illegible. */
+      @media (prefers-color-scheme: dark) {
+        body { background: #111827; color: #f3f4f6; }
+        .card { background: #1f2937; }
+        label { color: #d1d5db; }
+        input { background: #111827; border-color: #4b5563; color: inherit; }
+        .error { background: #451a1a; color: #fca5a5; border-color: #7f1d1d; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Join the chat</h1>
+      <% if !error.empty? %>
+      <p class="error"><%= error %></p>
+      <% end %>
+      <form method="get" action="/">
+        <label>Room password<input name="token" type="password" autofocus></label>
+        <label>Your name<input name="name"></label>
+        <button type="submit">Join</button>
+      </form>
+    </div>
+  </body>
+</html>
