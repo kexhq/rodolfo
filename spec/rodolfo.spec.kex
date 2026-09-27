@@ -770,4 +770,29 @@ describe("Rodolfo serves WebSocket routes") do
       _ => assert(false, "expected a Text message back, got ${reply}")
     end
   end
+
+  it("matches routes in declaration order, so a ws route before a catch-all still upgrades") do
+    let api = Rodolfo.router do
+      ws "/live" do |_, socket|
+        match socket.receiveMessage.try do
+          Text(text) => socket.send(Text(text)).try
+          _ => Void
+        end
+      end
+      get "/*path" do |env| "page ${env.param("path").or("")}" end
+    end
+    let state = boot(api)
+    let page = send(state.client, state.port, "GET", "/guide/")
+    let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/live").try
+    socket.send(Text("upgraded")).try
+    let reply = socket.receiveMessage.try
+    socket.close
+    teardown(state)
+
+    Assert.equal(page.body.to(String).try, "page guide/")
+    match reply do
+      Text(text) => Assert.equal(text, "upgraded")
+      _ => assert(false, "expected a Text message back, got ${reply}")
+    end
+  end
 end
