@@ -1759,6 +1759,46 @@ Rodolfo has no WebSocket route support until this is fixed upstream; #20
 being fixed did not unblock it. Same shape as #1/#2: the defect decided the
 architecture, not the other way around.
 
+### 24. A labelled call is sent to a longer overload, its missing argument filled in silently
+
+**Open.** Found 2026-10-04 on Kex `0.4.0-beta.4` (`56248ba`) while adding
+`sendFile` (kexhq/rodolfo#8); the same on the interpreter (`-R`) and on the
+BEAM (`--run`). Filed upstream as kexhq/kex#433.
+
+Two overloads that differ only in arity, the longer one repeating the
+shorter one's parameter names:
+
+```kex
+let greet(name: String, from: String) -> String = "2-arity: ${name} from ${from}"
+
+let greet(name: String, from: String, mood: String?) -> String = "3-arity: ${name} from ${from} mood ${mood}"
+
+main do
+  IO.printLine(greet("Ada", "Kex"))
+  IO.printLine(greet("Ada", from: "Kex"))
+end
+```
+
+```
+2-arity: Ada from Kex
+3-arity: Ada from Kex mood
+```
+
+The positional call picks the two-parameter function, as it should. The
+labelled one — the same two arguments — lands in the three-parameter
+function, with `mood` never supplied. `kex -C` reports nothing. The omitted
+parameter does not have to be optional for this to happen: in Rodolfo it was
+a plain `Headers`, on a `sendFile(env, path, from: String, headers: Headers)`
+declared after `sendFile(env, path, from: String)`. A route calling
+`sendFile(env, path, from: dir)` reached the four-parameter version with
+`headers` bound to an empty `Optional`, and the first `headers.get(...)`
+failed at request time with `Undefined method: get for Optional` — a 500
+from code that type-checked.
+
+Workaround: don't give two overloads of one name the same label. Rodolfo
+ships only the three-parameter `sendFile(env, path, from:)`; the form that
+also takes headers is `Rodolfo.Static.within`, under a name of its own.
+
 ## Ctrl+C does not stop a running server
 
 **Fixed** on `5a088fe`, by `85be62e` ("Attempt to fix SIGINT" — the name is

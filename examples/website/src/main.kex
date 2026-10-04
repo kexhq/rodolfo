@@ -1,7 +1,7 @@
 using Rodolfo
 
 let page(title: String, content: String) -> String do
-  "<!doctype html><html><head><title>${title}</title></head><body><nav><a href='/'>Home</a></nav>${content}</body></html>"
+  "<!doctype html><html><head><title>${title}</title><link rel='stylesheet' href='/site.css'></head><body><nav><a href='/'>Home</a></nav>${content}</body></html>"
 end
 
 main do
@@ -21,6 +21,11 @@ main do
         body: page(name, "<h1>${name}</h1><p>Author profile</p>")
       }
     end
+
+    # Everything in public/ at the path it has there, so /site.css above is
+    # public/site.css. Declared last: it is a catch-all, and the first route
+    # that matches wins.
+    publicFolder("public")
   end
 
   site.start(3000).try
