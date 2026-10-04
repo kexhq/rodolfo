@@ -796,3 +796,243 @@ describe("Rodolfo serves WebSocket routes") do
     end
   end
 end
+
+# Sends a request carrying one header, for the conditional cases.
+foul sendWith(client: Client, port: Integer, path: String, name: String, value: String) -> Net.HTTP.Response<Binary> do
+  client.request("GET", "http://127.0.0.1:${port}${path}", Headers.from([(name, value)]).try, Binary.empty).try
+end
+
+# `spec/fixtures/public` is the folder served below. Beside it, and so
+# outside it, sit `secret.txt` and `public-private/` — the latter there
+# because its name starts with the folder's own. Three symlinks live inside
+# the folder: `alias.txt` to a file in it, `escape.txt` to `../secret.txt`,
+# and `sibling` to `../public-private`.
+describe("Rodolfo serves static files") do
+  it("picks a content type from the extension, whatever its case") do
+    Assert.equal(Rodolfo.Static.mimeType("theme/site.css"), "text/css; charset=utf-8")
+    Assert.equal(Rodolfo.Static.mimeType("LOGO.PNG"), "image/png")
+    Assert.equal(Rodolfo.Static.mimeType("fonts/inter.woff2"), "font/woff2")
+    Assert.equal(Rodolfo.Static.mimeType("archive.tar.gz"), "application/gzip")
+  end
+
+  it("falls back to application/octet-stream for an extension it does not know") do
+    Assert.equal(Rodolfo.Static.mimeType("Makefile"), "application/octet-stream")
+    Assert.equal(Rodolfo.Static.mimeType("data.unknown"), "application/octet-stream")
+  end
+
+  it("serves a public folder's files at the paths they have inside it") do
+    let api = Rodolfo.router do
+      publicFolder("spec/fixtures/public")
+    end
+    let state = boot(api)
+    let text = send(state.client, state.port, "GET", "/hello.txt")
+    let nested = send(state.client, state.port, "GET", "/css/site.css")
+    let image = send(state.client, state.port, "GET", "/LOGO.PNG")
+    let bare = send(state.client, state.port, "GET", "/LICENSE")
+    teardown(state)
+
+    Assert.equal(text.status.code, 200)
+    Assert.equal(text.body.to(String).try, "hello from disk\n")
+    Assert.equal(header(text, "Content-Type"), Just("text/plain; charset=utf-8"))
+    Assert.equal(nested.body.to(String).try, "body { margin: 0 }\n")
+    Assert.equal(header(nested, "Content-Type"), Just("text/css; charset=utf-8"))
+    Assert.equal(header(image, "Content-Type"), Just("image/png"))
+    Assert.equal(image.body.length, 8)
+    Assert.equal(header(bare, "Content-Type"), Just("application/octet-stream"))
+  end
+
+  it("answers 404 for a missing file, a directory, and the folder itself") do
+    let api = Rodolfo.router do
+      scope "/assets" do
+        publicFolder("spec/fixtures/public")
+      end
+    end
+    let state = boot(api)
+    let found = send(state.client, state.port, "GET", "/assets/hello.txt")
+    let missing = send(state.client, state.port, "GET", "/assets/nope.txt")
+    let directory = send(state.client, state.port, "GET", "/assets/css")
+    let folder = send(state.client, state.port, "GET", "/assets")
+    let slash = send(state.client, state.port, "GET", "/assets/")
+    teardown(state)
+
+    Assert.equal(found.status.code, 200)
+    Assert.equal(missing.status.code, 404)
+    Assert.equal(directory.status.code, 404)
+    Assert.equal(folder.status.code, 404)
+    Assert.equal(slash.status.code, 404)
+  end
+
+  it("answers 404 for a folder that does not exist") do
+    let api = Rodolfo.router do
+      publicFolder("spec/fixtures/no-such-folder")
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/hello.txt")
+    teardown(state)
+
+    Assert.equal(response.status.code, 404)
+  end
+
+  # The client would tidy a literal `..` away before sending it, so these
+  # arrive percent-encoded — which the router decodes into the capture, and
+  # is exactly how a hostile request spells one.
+  it("refuses a path that climbs out of the folder with ..") do
+    let api = Rodolfo.router do
+      publicFolder("spec/fixtures/public")
+    end
+    let state = boot(api)
+    let parent = send(state.client, state.port, "GET", "/%2e%2e/secret.txt")
+    let encoded = send(state.client, state.port, "GET", "/%2e%2e%2fsecret.txt")
+    let nested = send(state.client, state.port, "GET", "/css/%2e%2e/%2e%2e/secret.txt")
+    let sibling = send(state.client, state.port, "GET", "/%2e%2e/public-private/notes.txt")
+    let absolute = send(state.client, state.port, "GET", "/%2fetc%2fpasswd")
+    let inside = send(state.client, state.port, "GET", "/css/%2e%2e/hello.txt")
+    teardown(state)
+
+    Assert.equal(parent.status.code, 404)
+    Assert.equal(encoded.status.code, 404)
+    Assert.equal(nested.status.code, 404)
+    Assert.equal(sibling.status.code, 404)
+    Assert.equal(absolute.status.code, 404)
+    Assert.equal(inside.status.code, 200)
+    Assert.equal(inside.body.to(String).try, "hello from disk\n")
+  end
+
+  it("refuses a symlink that leads out of the folder, and follows one that stays in") do
+    let api = Rodolfo.router do
+      publicFolder("spec/fixtures/public")
+    end
+    let state = boot(api)
+    let alias_ = send(state.client, state.port, "GET", "/alias.txt")
+    let escape_ = send(state.client, state.port, "GET", "/escape.txt")
+    let through = send(state.client, state.port, "GET", "/sibling/notes.txt")
+    teardown(state)
+
+    Assert.equal(alias_.status.code, 200)
+    Assert.equal(alias_.body.to(String).try, "hello from disk\n")
+    Assert.equal(escape_.status.code, 404)
+    Assert.equal(through.status.code, 404)
+  end
+
+  it("lets a route declared before the folder win, and answers only GET and HEAD") do
+    let api = Rodolfo.router do
+      get "/hello.txt" do "from the route" end
+      publicFolder("spec/fixtures/public")
+    end
+    let state = boot(api)
+    let routed = send(state.client, state.port, "GET", "/hello.txt")
+    let served = send(state.client, state.port, "GET", "/css/site.css")
+    let headed = send(state.client, state.port, "HEAD", "/css/site.css")
+    let posted = send(state.client, state.port, "POST", "/css/site.css")
+    teardown(state)
+
+    Assert.equal(routed.body.to(String).try, "from the route")
+    Assert.equal(served.status.code, 200)
+    Assert.equal(headed.status.code, 200)
+    Assert.equal(header(headed, "Content-Type"), Just("text/css; charset=utf-8"))
+    Assert.equal(headed.body.length, 0)
+    Assert.equal(posted.status.code, 405)
+  end
+
+  it("sends validators, and a 304 once the browser holds a fresh copy") do
+    let api = Rodolfo.router do
+      publicFolder("spec/fixtures/public")
+    end
+    let state = boot(api)
+    let first = send(state.client, state.port, "GET", "/hello.txt")
+    let tag = header(first, "ETag").or("")
+    let stamp = header(first, "Last-Modified").or("")
+    let matched = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", tag)
+    let listed = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", "\"other\", ${tag}")
+    let stale = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", "\"other\"")
+    let since = sendWith(state.client, state.port, "/hello.txt", "If-Modified-Since", stamp)
+    let earlier = sendWith(state.client, state.port, "/hello.txt", "If-Modified-Since", "Thu, 01 Jan 1970 00:00:00 GMT")
+    teardown(state)
+
+    assert(tag.startsWith?("W/\""), "expected a weak ETag, got ${tag}")
+    assert(stamp.endsWith?(" GMT") && stamp.length == 29, "expected an HTTP date, got ${stamp}")
+    Assert.equal(matched.status.code, 304)
+    Assert.equal(matched.body.length, 0)
+    Assert.equal(header(matched, "ETag"), Just(tag))
+    Assert.equal(listed.status.code, 304)
+    Assert.equal(stale.status.code, 200)
+    Assert.equal(since.status.code, 304)
+    Assert.equal(earlier.status.code, 200)
+  end
+
+  it("sends the folder's own headers with every file") do
+    let api = Rodolfo.router do
+      publicFolder("spec/fixtures/public", Headers.from([("Cache-Control", "public, max-age=3600")]).try)
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/hello.txt")
+    let unchanged = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", header(response, "ETag").or(""))
+    teardown(state)
+
+    Assert.equal(header(response, "Cache-Control"), Just("public, max-age=3600"))
+    Assert.equal(unchanged.status.code, 304)
+    Assert.equal(header(unchanged, "Cache-Control"), Just("public, max-age=3600"))
+  end
+
+  it("runs the enclosing scope's plugs around a served file") do
+    let api = Rodolfo.router do
+      scope "/private" do
+        plug(blocked)
+        publicFolder("spec/fixtures/public")
+      end
+    end
+    let state = boot(api)
+    let response = send(state.client, state.port, "GET", "/private/hello.txt")
+    teardown(state)
+
+    Assert.equal(response.status.code, 403)
+  end
+
+  it("sends one file a route names with sendFile") do
+    let api = Rodolfo.router do
+      get "/download" do |env| sendFile(env, "spec/fixtures/public/css/site.css") end
+      get "/gone" do |env| sendFile(env, "spec/fixtures/public/nope.css") end
+      get "/folder" do |env| sendFile(env, "spec/fixtures/public/css") end
+    end
+    let state = boot(api)
+    let file = send(state.client, state.port, "GET", "/download")
+    let gone = send(state.client, state.port, "GET", "/gone")
+    let folder = send(state.client, state.port, "GET", "/folder")
+    let again = sendWith(state.client, state.port, "/download", "If-None-Match", header(file, "ETag").or(""))
+    teardown(state)
+
+    Assert.equal(file.status.code, 200)
+    Assert.equal(header(file, "Content-Type"), Just("text/css; charset=utf-8"))
+    Assert.equal(file.body.to(String).try, "body { margin: 0 }\n")
+    Assert.equal(gone.status.code, 404)
+    Assert.equal(folder.status.code, 404)
+    Assert.equal(again.status.code, 304)
+  end
+
+  it("confines sendFile to a directory when the path came from the request") do
+    let api = Rodolfo.router do
+      get "/themes/*path" do |env|
+        sendFile(env, env.param("path").try, from: "spec/fixtures/public")
+      end
+      get "/pinned/*path" do |env|
+        Rodolfo.Static.within(
+          env.request,
+          "spec/fixtures/public",
+          env.param("path").try,
+          Headers.from([("Cache-Control", "no-store")]).try)
+      end
+    end
+    let state = boot(api)
+    let inside = send(state.client, state.port, "GET", "/themes/css/site.css")
+    let climbing = send(state.client, state.port, "GET", "/themes/%2e%2e/secret.txt")
+    let linked = send(state.client, state.port, "GET", "/themes/escape.txt")
+    let pinned = send(state.client, state.port, "GET", "/pinned/hello.txt")
+    teardown(state)
+
+    Assert.equal(inside.status.code, 200)
+    Assert.equal(inside.body.to(String).try, "body { margin: 0 }\n")
+    Assert.equal(climbing.status.code, 404)
+    Assert.equal(linked.status.code, 404)
+    Assert.equal(header(pinned, "Cache-Control"), Just("no-store"))
+  end
+end

@@ -2,8 +2,8 @@
 # at the root of this checkout, not a published release.
 package "website" do
   version("0.1.0")
-  description("Rodolfo example: server-rendered HTML responses")
-  kex(">= 0.4.0-beta.3")
+  description("Rodolfo example: server-rendered HTML responses and static files")
+  kex(">= 0.4.0-beta.4")
   license("MIT")
 
   entrypoint("src/main.kex")

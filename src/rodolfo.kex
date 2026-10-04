@@ -24,7 +24,8 @@
 # The reply records live in +Rodolfo.Response+ and the escaping in
 # +Rodolfo.Markup+; both are re-exported here, so one `using Rodolfo` brings
 # the whole DSL — the verbs, `Response.*`, and the ``html$`` and ``rawHTML$``
-# tags.
+# tags. Files on disk are served by +sendFile+ and +publicFolder+, whose work
+# is in +Rodolfo.Static+.
 module Rodolfo
 
 # `Response` below is Rodolfo's own — the reply a route block returns — so
@@ -39,6 +40,7 @@ using Net.Socket
 using URI, only: [URI, Form]
 using Rodolfo.Markup
 using Rodolfo.Response
+using Rodolfo.Static
 
 # Markup that is already escaped — see +Rodolfo.Markup+.
 type Safe = Rodolfo.Markup.Safe
@@ -390,6 +392,97 @@ let options(path, handler) = route("OPTIONS", path, handler)
 
 options : String -> Block<Reply> -> Entry
 let options(path, block) = route("OPTIONS", path, block)
+
+# Sends one file from disk, its +Content-Type+ taken from the extension (see
+# +Rodolfo.Static.mimeType+). A path that is missing, or is not a regular
+# file, answers 404.
+#
+# The file goes out with an +ETag+ and a +Last-Modified+, and a request whose
+# +If-None-Match+ or +If-Modified-Since+ shows the browser already has it is
+# answered 304 with no body.
+#
+# The path is the application's own, so nothing confines it — never build it
+# from request input. To serve whatever a request names inside a directory,
+# use +publicFolder+, or the three-argument form below.
+#
+# @param env [Context] the request being answered
+# @param path [String] the file to send, relative to the working directory
+#   unless absolute
+# @return [Reply] the file, a 404, or a 304
+#
+# @example
+#   get "/favicon.ico" do |env| sendFile(env, "assets/favicon.ico") end
+sendFile : Context -> String -> Reply
+foul sendFile(env, path) = Rodolfo.Static.file(env.request, path, Headers.empty)
+
+# Sends the file a request names inside a directory: +path+ is resolved
+# beneath +from+ and refused with a 404 when it leads anywhere else, through
+# a +..+ segment or a symlink alike. This is the form for a path that came
+# from the request — a route capture, a query field — when the directory is
+# only known per request, which +publicFolder+ cannot express.
+#
+# For headers of your own on the file — a +Cache-Control+, most often — call
+# +Rodolfo.Static.within+, which this is, with +env.request+ and the headers.
+#
+# @param env [Context] the request being answered
+# @param path [String] the requested path beneath +from+, untrusted
+# @param from [String] the directory the file must be inside
+# @return [Reply] the file, a 404, or a 304
+#
+# @example Serving the assets of whichever theme is active
+#   get "/_theme/*path" do |env|
+#     sendFile(env, env.param("path").try, from: activeTheme().directory)
+#   end
+sendFile : Context -> String -> String -> Reply
+foul sendFile(env, path, from: String) do
+  Rodolfo.Static.within(env.request, from, path, Headers.empty)
+end
+
+# Serves every file in a directory, at the paths they have inside it:
+# +publicFolder("public")+ answers +GET /css/site.css+ with
+# +public/css/site.css+. Inside a +scope+ the directory is served beneath the
+# scope's prefix, and the scope's plugs apply.
+#
+# Each file is sent as +sendFile+ sends one — content type from the
+# extension, +ETag+ and +Last-Modified+, 304 for a fresh copy — and a request
+# is answered 404 when it names no regular file or a path outside the
+# directory, whether it gets there by +..+ or by a symlink. A directory has
+# no index page and no listing.
+#
+# It is a catch-all +GET+ route, and the first route that matches a request
+# wins, so declare it after the routes that share its prefix — a request it
+# matches is not passed on to a later route when the file is missing.
+#
+# @param directory [String] the directory to serve, relative to the working
+#   directory unless absolute
+# @return [Entry] the declaration
+#
+# @example Serving +public/+ at the root, after the application's own routes
+#   Rodolfo.router do
+#     get "/" do "home" end
+#     publicFolder("public")
+#   end
+#
+# @example Serving it beneath a prefix
+#   scope "/assets" do
+#     publicFolder("public")
+#   end
+publicFolder : String -> Entry
+foul publicFolder(directory) = publicFolder(directory, Headers.empty)
+
+# The same, with headers sent on every file served — what Sinatra calls
+# +static_cache_control+ and Kemal +static_headers+.
+#
+# @param directory [String] the directory to serve
+# @param headers [Headers] sent with every file, and with a 304
+# @return [Entry] the declaration
+#
+# @example Letting browsers keep assets for an hour
+#   publicFolder("public", Net.HTTP.Headers.empty.add("Cache-Control", "public, max-age=3600").try)
+publicFolder : String -> Headers -> Entry
+foul publicFolder(directory, headers) = route("GET", "/*path", do |env|
+  Rodolfo.Static.within(env.request, directory, env.param("path").or(""), headers)
+end)
 
 # Declares a WebSocket route: any client that completes the RFC 6455
 # handshake at `path` is handed a live `Connection`, ready to `send` and

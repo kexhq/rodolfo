@@ -1,7 +1,8 @@
 # Website
 
 Server-rendered HTML responses: a shared `page` layout wrapping each
-route's content, sent back as `Response.HTML`.
+route's content, sent back as `Response.HTML`, styled by a stylesheet
+`publicFolder` serves from `public/`.
 
 ## Running it
 
@@ -14,6 +15,10 @@ tey run        # http://localhost:3000/
 | --- | --- |
 | `GET /` | open http://localhost:3000/ in a browser |
 | `GET /authors/:name` | open http://localhost:3000/authors/ada in a browser |
+| `GET /site.css` | `curl -i http://localhost:3000/site.css` — `public/site.css`, as `text/css` |
+
+`public/` is found relative to the working directory, so run the example from
+this directory.
 
 ## It is part of the Rodolfo monorepo
 

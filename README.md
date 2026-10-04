@@ -207,6 +207,72 @@ shared scope, so a plug on `router2` never reaches `router1`'s routes:
 let combined = coreRoutes + adminRoutes + healthRoutes
 ```
 
+## Static files
+
+`publicFolder` serves a directory, each file at the path it has inside it —
+the name Sinatra and Kemal give the same thing:
+
+```rb
+Rodolfo.router do
+  get "/" do "home" end
+
+  publicFolder("public")        # GET /css/site.css sends public/css/site.css
+end
+```
+
+It is a catch-all `GET` route, and the first route that matches a request
+wins, so it goes **after** the routes that share its prefix: a request it
+matches is not passed on to a later route when the file is missing. Inside a
+`scope` the directory is served beneath the scope's prefix, and the scope's
+plugs wrap it like any other route:
+
+```rb
+scope "/assets" do
+  publicFolder("public")        # GET /assets/css/site.css
+end
+```
+
+`sendFile` sends one file from a route of your own:
+
+```rb
+get "/favicon.ico" do |env| sendFile(env, "assets/favicon.ico") end
+```
+
+Either way the reply is the file with:
+
+- a `Content-Type` from its extension — `Rodolfo.Static.mimeType(path)` is the
+  table, and anything it does not know is `application/octet-stream`;
+- an `ETag` and a `Last-Modified`, so a request carrying a matching
+  `If-None-Match` or `If-Modified-Since` is answered `304` with no body;
+- a `404` when the path is missing or is not a regular file. A directory has
+  no index page and no listing.
+
+A requested path never leaves the directory. It is resolved the way
+`realpath(3)` does and compared with the directory's own real path, so a `..`
+segment and a symlink pointing outside are both a `404`, while a symlink that
+stays inside is followed. `sendFile(env, path)` is the exception, because
+that path is yours and not the request's — when it does come from the
+request, name the directory it must stay in:
+
+```rb
+get "/_theme/*path" do |env|
+  sendFile(env, env.param("path").try, from: theme.directory)
+end
+```
+
+Caching headers are a second argument to `publicFolder`, sent with every
+file and with every `304`:
+
+```rb
+publicFolder("public", Net.HTTP.Headers.empty.add("Cache-Control", "public, max-age=3600").try)
+```
+
+`Rodolfo.Static.within(env.request, directory, path, headers)` is what both
+are built on, for a route that needs the headers and the directory to be its
+own. Paths are relative to the working directory unless absolute, and a file
+is read whole into memory before it is sent — right for stylesheets, scripts,
+images, and fonts, not for streaming video.
+
 ## WebSocket routes
 
 `ws` declares a route that upgrades on a completed RFC 6455 handshake,
@@ -296,7 +362,8 @@ application would:
 
 - `examples/hello` — dynamic parameters and request bodies
 - `examples/statusapi` — JSON health and catalog API, with a rescued route
-- `examples/website` — server-rendered HTML responses
+- `examples/website` — server-rendered HTML responses, with a stylesheet
+  served from `public/` by `publicFolder`
 - `examples/requestinfo` — reusable route-handler wrapping
 - `examples/plugs` — request logging, response headers, and a scoped
   token-gated admin route, using `plug` and `scope`
@@ -349,10 +416,12 @@ tey build     # compile src/ into ebin/
 tey test      # run spec/*.spec.kex on the BEAM
 ```
 
-Rodolfo needs Kex `>= 0.4.0-beta.3`; pick a toolchain with `tey kex install`.
-The floor is not cosmetic: before that release an application function could
-displace a library's `private do` helper of the same name and arity, which
-silently disabled the escaping behind `html$`. `spec/rodolfo.spec.kex` defines
+Rodolfo needs Kex `>= 0.4.0-beta.4`; pick a toolchain with `tey kex install`.
+The floor is not cosmetic: `sendFile` and `publicFolder` read a file's size
+and modification time through `FS.File.info`, which arrived in that release,
+and before `0.4.0-beta.3` an application function could displace a library's
+`private do` helper of the same name and arity, which silently disabled the
+escaping behind `html$`. `spec/rodolfo.spec.kex` defines
 `rendered`, `interleave`, and `field` at the top precisely to collide with
 Rodolfo's internals, and those cases fail on an older toolchain.
 
