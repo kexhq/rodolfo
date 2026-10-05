@@ -1015,11 +1015,11 @@ describe("Rodolfo serves static files") do
         sendFile(env, env.param("path").try, from: "spec/fixtures/public")
       end
       get "/pinned/*path" do |env|
-        Rodolfo.Static.within(
-          env.request,
-          "spec/fixtures/public",
+        sendFile(
+          env,
           env.param("path").try,
-          Headers.from([("Cache-Control", "no-store")]).try)
+          from: "spec/fixtures/public",
+          headers: Headers.from([("Cache-Control", "no-store")]).try)
       end
     end
     let state = boot(api)
@@ -1033,6 +1033,8 @@ describe("Rodolfo serves static files") do
     Assert.equal(inside.body.to(String).try, "body { margin: 0 }\n")
     Assert.equal(climbing.status.code, 404)
     Assert.equal(linked.status.code, 404)
+    Assert.equal(pinned.status.code, 200)
     Assert.equal(header(pinned, "Cache-Control"), Just("no-store"))
+    Assert.equal(header(inside, "Cache-Control"), None)
   end
 end
