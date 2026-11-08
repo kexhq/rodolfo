@@ -8,7 +8,9 @@ using Catalog.Draft, only: [Draft]
 foul scratch(name: String) -> String do
   let path = FS.Path.join(FS.Directory.temporary, "rodolfo-library-${name}.tsv")
   ENV.set("LIBRARY_FILE", path)
-  FS.File.exists?(path) then FS.File.delete(path) else true
+  if FS.File.exists?(path)
+    let _ = FS.File.delete(path)
+  end
   path
 end
 
