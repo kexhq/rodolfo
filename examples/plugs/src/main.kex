@@ -3,6 +3,7 @@
 #
 # Open /, then /admin/stats with and without ?token=let-me-in.
 using Rodolfo
+using Net.HTTP, only: [Headers]
 
 # An around-style plug: runs before calling the handler it wraps, and after.
 # It never inspects the reply's shape, so it works unchanged for a bare

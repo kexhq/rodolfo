@@ -79,8 +79,9 @@ foul opened(drafts) do
 end
 
 private do
-  # Replaces the catalogue file with `books`.
-  persisted : [Book] -> Bool
+  # Replaces the catalogue file with `books`. A failed write leaves the
+  # previous file; the catalogue in memory stays current either way.
+  persisted : [Book] -> Result<Void, FS.FileError>
   foul persisted(books) = FS.File.write(catalogueFile, books.encoded)
 
   # A catalogue built from `drafts`, numbered from one and written to disk.
