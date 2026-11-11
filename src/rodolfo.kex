@@ -421,9 +421,6 @@ foul sendFile(env, path) = Rodolfo.Static.file(env.request, path, Headers.empty)
 # from the request — a route capture, a query field — when the directory is
 # only known per request, which +publicFolder+ cannot express.
 #
-# For headers of your own on the file — a +Cache-Control+, most often — call
-# +Rodolfo.Static.within+, which this is, with +env.request+ and the headers.
-#
 # @param env [Context] the request being answered
 # @param path [String] the requested path beneath +from+, untrusted
 # @param from [String] the directory the file must be inside
@@ -436,6 +433,24 @@ foul sendFile(env, path) = Rodolfo.Static.file(env.request, path, Headers.empty)
 sendFile : Context -> String -> String -> Reply
 foul sendFile(env, path, from: String) do
   Rodolfo.Static.within(env.request, from, path, Headers.empty)
+end
+
+# The same, with headers of your own on the file — a +Cache-Control+, most
+# often. Yours win over the +ETag+ and +Last-Modified+ this would send.
+#
+# @param env [Context] the request being answered
+# @param path [String] the requested path beneath +from+, untrusted
+# @param from [String] the directory the file must be inside
+# @param headers [Headers] sent with the file, and with a 304
+# @return [Reply] the file, a 404, or a 304
+#
+# @example Theme assets the browser must not keep
+#   get "/_theme/*path" do |env|
+#     sendFile(env, env.param("path").try, from: theme.directory, headers: noStore)
+#   end
+sendFile : Context -> String -> String -> Headers -> Reply
+foul sendFile(env, path, from: String, headers: Headers) do
+  Rodolfo.Static.within(env.request, from, path, headers)
 end
 
 # Serves every file in a directory, at the paths they have inside it:

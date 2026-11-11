@@ -1759,11 +1759,21 @@ Rodolfo has no WebSocket route support until this is fixed upstream; #20
 being fixed did not unblock it. Same shape as #1/#2: the defect decided the
 architecture, not the other way around.
 
-### 24. A labelled call is sent to a longer overload, its missing argument filled in silently
+### 29. A labelled call is sent to a longer overload, its missing argument filled in silently
 
-**Open.** Found 2026-10-04 on Kex `0.4.0-beta.4` (`56248ba`) while adding
-`sendFile` (kexhq/rodolfo#8); the same on the interpreter (`-R`) and on the
-BEAM (`--run`). Filed upstream as kexhq/kex#433.
+**Fixed** by kexhq/kex#434 ("Fix module include and function call issue"),
+closing kexhq/kex#433. Re-verified 2026-10-05 against that PR's head
+(`c86acd2`): the repro below prints `2-arity` for both calls on the
+interpreter and on the BEAM, and `sendFile(env, path, from:, headers:)` —
+the overload this defect had forced out — is back beside the
+three-parameter form, with `spec/rodolfo.spec.kex` calling both by label in
+one router. The first release carrying the fix is `0.4.0-beta.5`, which is
+why that is now Rodolfo's floor: on `0.4.0-beta.4` the same spec fails with
+the 500 described below.
+
+Found 2026-10-04 on Kex `0.4.0-beta.4` (`56248ba`) while adding `sendFile`
+(kexhq/rodolfo#8); the same on the interpreter (`-R`) and on the BEAM
+(`--run`).
 
 Two overloads that differ only in arity, the longer one repeating the
 shorter one's parameter names:
@@ -1795,9 +1805,10 @@ declared after `sendFile(env, path, from: String)`. A route calling
 failed at request time with `Undefined method: get for Optional` — a 500
 from code that type-checked.
 
-Workaround: don't give two overloads of one name the same label. Rodolfo
-ships only the three-parameter `sendFile(env, path, from:)`; the form that
-also takes headers is `Rodolfo.Static.within`, under a name of its own.
+Workaround, while it was needed: don't give two overloads of one name the
+same label. Rodolfo shipped only the three-parameter `sendFile(env, path,
+from:)`, and the form that also takes headers was `Rodolfo.Static.within`,
+under a name of its own.
 
 ## Ctrl+C does not stop a running server
 

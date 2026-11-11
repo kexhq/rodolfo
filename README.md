@@ -267,10 +267,16 @@ file and with every `304`:
 publicFolder("public", Net.HTTP.Headers.empty.add("Cache-Control", "public, max-age=3600").try)
 ```
 
-`Rodolfo.Static.within(env.request, directory, path, headers)` is what both
-are built on, for a route that needs the headers and the directory to be its
-own. Paths are relative to the working directory unless absolute, and a file
-is read whole into memory before it is sent — right for stylesheets, scripts,
+`sendFile` takes them as `headers:`, alongside the directory:
+
+```rb
+get "/_theme/*path" do |env|
+  sendFile(env, env.param("path").try, from: theme.directory, headers: noStore)
+end
+```
+
+Paths are relative to the working directory unless absolute, and a file is
+read whole into memory before it is sent — right for stylesheets, scripts,
 images, and fonts, not for streaming video.
 
 ## WebSocket routes
@@ -416,10 +422,13 @@ tey build     # compile src/ into ebin/
 tey test      # run spec/*.spec.kex on the BEAM
 ```
 
-Rodolfo needs Kex `>= 0.4.0-beta.4`; pick a toolchain with `tey kex install`.
-The floor is not cosmetic: `sendFile` and `publicFolder` read a file's size
-and modification time through `FS.File.info`, which arrived in that release,
-and before `0.4.0-beta.3` an application function could displace a library's
+Rodolfo needs Kex `>= 0.4.0-beta.5`; pick a toolchain with `tey kex install`.
+The floor is not cosmetic. Before that release a labelled call could land in
+a longer overload of the same name, so `sendFile(env, path, from: dir)`
+reached the form that also takes `headers:` and failed at request time.
+`sendFile` and `publicFolder` also read a file's size and modification time
+through `FS.File.info`, which arrived in `0.4.0-beta.4`, and before
+`0.4.0-beta.3` an application function could displace a library's
 `private do` helper of the same name and arity, which silently disabled the
 escaping behind `html$`. `spec/rodolfo.spec.kex` defines
 `rendered`, `interleave`, and `field` at the top precisely to collide with
