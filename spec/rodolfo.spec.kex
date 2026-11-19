@@ -559,11 +559,7 @@ let poweredByAround = Plug.around do |inner, env|
 end
 
 # Records which plug ran, in call order, so ordering can be asserted on.
-#
-# Its result is spelled +Rodolfo.Handler -> Rodolfo.Handler+ rather than
-# +Rodolfo.Plug+: Kex 0.4.0-rc.3 does not expand a function alias named as
-# another module's function result, and refuses the plug.
-marked : String -> ((Rodolfo.Context -> Rodolfo.Reply) -> (Rodolfo.Context -> Rodolfo.Reply))
+marked : String -> Rodolfo.Plug
 let marked(tag) = do |inner|
   do |env|
     match inner(env) do
