@@ -205,6 +205,24 @@ type Reply = String
 # A route block: the request environment in, a reply out.
 type Handler = Context -> Reply
 
+# Everything a route block may finish with: a +Reply+, or one that did not
+# come about. A block that uses `.try` gives a +Result+ or an +Optional+
+# rather than a bare +Reply+, and the route answers it for you:
+#
+# - +Ok(reply)+ and +Just(reply)+ send +reply+;
+# - +Error(reason)+ is logged and answered 500, like any other application
+#   bug;
+# - +None+ is answered 404, so a lookup that comes up empty
+#   (`Book.find(env.param("id").try).try`) is a missing page.
+#
+# Plugs never see an +Outcome+: by the time a plug calls the handler it
+# wraps, the failure is already the 500 or 404 +Reply+.
+type Outcome = Reply | Result<Reply, Any> | Reply?
+
+# What a route declaration takes: a +Handler+, or a block that may fail
+# (see +Outcome+).
+type Action = Context -> Outcome
+
 # A composable request/response wrapper. A plug receives the handler it
 # wraps (everything declared after it in its own scope, and every route
 # beneath a nested scope) and returns a new handler around it.
@@ -244,7 +262,7 @@ type Plug = Handler -> Handler
 record Definition do
   method : String
   path : String
-  handler : Handler
+  handler : Action
 end
 
 # A WebSocket route block: the request environment the handshake arrived
@@ -286,7 +304,7 @@ record Flat do
   method : String
   path : String
   plugs : [Plug]
-  handler : Handler
+  handler : Action
 end
 
 # Declares a route for any HTTP method.
@@ -296,101 +314,101 @@ end
 #
 # @param method [String] the HTTP method, uppercase
 # @param path [String] the route path, with +:name+ captures
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
 #
 # @example
 #   route "PROPFIND", "/files" do Response.Empty {} end
-route : String -> String -> Handler -> Entry
-let route(method, path, handler) = Definition {
+route : String -> String -> Action -> Entry
+let route(method, path, action) = Definition {
   method: method,
   path: path,
-  handler: handler
+  handler: action
 }
 
 # The same declaration, for a route block that ignores the request entirely
-# — `Block<Reply>` (no `|_|`) rather than `Handler` (`|_|` mandatory).
-route : String -> String -> Block<Reply> -> Entry
+# — `Block<Outcome>` (no `|_|`) rather than `Action` (`|_|` mandatory).
+route : String -> String -> Block<Outcome> -> Entry
 let route(method, path, block) = route(method, path, do |_| block() end)
 
 # Declares a +GET+ route.
 #
 # @param path [String] the route path, with +:name+ captures
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
 #
 # @example
 #   get "/hello/:name" do |env| "Hello, ${env.param("name").try}!" end
-get : String -> Handler -> Entry
+get : String -> Action -> Entry
 let get(path, handler) = route("GET", path, handler)
 
-get : String -> Block<Reply> -> Entry
+get : String -> Block<Outcome> -> Entry
 let get(path, block) = route("GET", path, block)
 
 # Declares a +POST+ route.
 #
 # @param path [String] the route path
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
-post : String -> Handler -> Entry
+post : String -> Action -> Entry
 let post(path, handler) = route("POST", path, handler)
 
-post : String -> Block<Reply> -> Entry
+post : String -> Block<Outcome> -> Entry
 let post(path, block) = route("POST", path, block)
 
 # Declares a +PUT+ route.
 #
 # @param path [String] the route path
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
-put : String -> Handler -> Entry
+put : String -> Action -> Entry
 let put(path, handler) = route("PUT", path, handler)
 
-put : String -> Block<Reply> -> Entry
+put : String -> Block<Outcome> -> Entry
 let put(path, block) = route("PUT", path, block)
 
 # Declares a +PATCH+ route.
 #
 # @param path [String] the route path
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
-patch : String -> Handler -> Entry
+patch : String -> Action -> Entry
 let patch(path, handler) = route("PATCH", path, handler)
 
-patch : String -> Block<Reply> -> Entry
+patch : String -> Block<Outcome> -> Entry
 let patch(path, block) = route("PATCH", path, block)
 
 # Declares a +DELETE+ route.
 #
 # @param path [String] the route path
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
-delete : String -> Handler -> Entry
+delete : String -> Action -> Entry
 let delete(path, handler) = route("DELETE", path, handler)
 
-delete : String -> Block<Reply> -> Entry
+delete : String -> Block<Outcome> -> Entry
 let delete(path, block) = route("DELETE", path, block)
 
 # Declares a +HEAD+ route.
 #
 # @param path [String] the route path
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
-head : String -> Handler -> Entry
+head : String -> Action -> Entry
 let head(path, handler) = route("HEAD", path, handler)
 
-head : String -> Block<Reply> -> Entry
+head : String -> Block<Outcome> -> Entry
 let head(path, block) = route("HEAD", path, block)
 
 # Declares an +OPTIONS+ route.
 #
 # @param path [String] the route path
-# @param handler [Handler] the route block
+# @param handler [Action] the route block
 # @return [Entry] the declaration
-options : String -> Handler -> Entry
+options : String -> Action -> Entry
 let options(path, handler) = route("OPTIONS", path, handler)
 
-options : String -> Block<Reply> -> Entry
+options : String -> Block<Outcome> -> Entry
 let options(path, block) = route("OPTIONS", path, block)
 
 # Sends one file from disk, its +Content-Type+ taken from the extension (see
@@ -786,6 +804,7 @@ private do
           [compileFlat(Flat { method: method, path: joinedPath(prefix, path), plugs: stack, handler: handler })]
         WsDefinition { path, handler } => [compileWs(WsDefinition { path: joinedPath(prefix, path), handler: handler })]
         Scope { prefix: childPrefix, children } => declaredRoutes(children, joinedPath(prefix, childPrefix), stack)
+        PlugEntry { wrapper } => []
       end
     }
   end
@@ -821,7 +840,7 @@ private do
     method: method,
     path: path,
     handler: do |request, context|
-      let handler = wrapped(plugs, base)
+      let handler = wrapped(plugs, do |env| settled(base(env), "${method} ${path}") end)
       respond(
         handler(Context { request: request, context: context }),
         "${method} ${path}"
@@ -850,6 +869,18 @@ private do
   let wrapped([], handler) = handler
   let wrapped([p | rest], handler) = p(wrapped(rest, handler))
 
+  # The +Reply+ a route block's +Outcome+ stands for — see +Outcome+.
+  foul settled(outcome: Outcome, route: String) -> Reply = match outcome do
+    Ok(reply) => reply
+    Error(reason) => do
+      IO.printError("Rodolfo: ${route} failed: ${reason}")
+      Rodolfo.Response.Text { status: 500, body: "Internal Server Error" }
+    end
+    Just(reply) => reply
+    None => Rodolfo.Response.Text { status: 404, body: "Not Found" }
+    reply => reply
+  end
+
   # Turns whatever the route block returned into an HTTP response.
   #
   # A route is declared to return a +Reply+, but nothing stops a handler
@@ -864,23 +895,40 @@ private do
   foul respond(Rodolfo.Response.JSON { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "application/json")
   foul respond(Rodolfo.Response.Text { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "text/plain; charset=utf-8")
   foul respond(Rodolfo.Response.HTML { status, body, headers }, route: String) -> Net.HTTP.Response<Binary> = textual(status, body, headers, "text/html; charset=utf-8")
-  foul respond(Rodolfo.Response.Raw { status, body, headers, contentType }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, body, typed(headers, contentType))
+  foul respond(Rodolfo.Response.Raw { status, body, headers, contentType }, route: String) -> Net.HTTP.Response<Binary> do
+    Net.HTTP.Response.binary(status, body, typed(headers, contentType).try)
+  rescue |reason|
+    refused(route, reason)
+  end
   foul respond(Rodolfo.Response.Empty { status, headers }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, Binary.empty, headers)
-  foul respond(Rodolfo.Response.Redirect { status, location, headers }, route: String) -> Net.HTTP.Response<Binary> = Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
+  foul respond(Rodolfo.Response.Redirect { status, location, headers }, route: String) -> Net.HTTP.Response<Binary> do
+    Net.HTTP.Response.binary(status, Binary.empty, appended(headers, "Location", location).try)
+  rescue |reason|
+    refused(route, reason)
+  end
   foul respond(other: Any, route: String) -> Net.HTTP.Response<Binary> do
     IO.printError("Rodolfo: ${route} returned a value that is not a Reply: ${other}")
     Net.HTTP.Response.text(500, "Internal Server Error")
   end
 
   foul textual(status: Integer, body: String, headers: Headers, contentType: String) -> Net.HTTP.Response<Binary> do
-    Net.HTTP.Response.binary(status, body.to(Binary).try, typed(headers, contentType))
+    Net.HTTP.Response.binary(status, body.to(Binary).try, typed(headers, contentType).try)
+  rescue |reason|
+    refused("a reply", reason)
+  end
+
+  # A reply that cannot be put on the wire (a header carrying a line break,
+  # say) is logged and answered as a 500, like any other application bug.
+  foul refused(route: String, reason: Any) -> Net.HTTP.Response<Binary> do
+    IO.printError("Rodolfo: ${route} gave a reply that cannot be sent: ${reason}")
+    Net.HTTP.Response.text(500, "Internal Server Error")
   end
 
   # A reply's own `Content-Type` wins; the record's kind only fills the gap.
-  foul typed(headers: Headers, contentType: String) -> Headers do
+  foul typed(headers: Headers, contentType: String) -> Result<Headers, NetError> do
     match headers.get("Content-Type") do
-      Just(_) => headers
-      None => appended(headers, "Content-Type", contentType).try
+      Just(_) => Ok(headers)
+      None => appended(headers, "Content-Type", contentType)
     end
   end
 

@@ -27,15 +27,15 @@ record ServerState do
 end
 
 # Starts a router in the background and returns a state to drive it.
-foul boot(router: Rodolfo.Router) -> ServerState do
+foul boot(router: Rodolfo.Router) -> ServerState or! Any do
   let server = router.background("127.0.0.1", 0, ServerOptions {
     maximumHandlers: 32,
     backlog: 16,
-    gracefulShutdown: Duration.milliseconds(100)
+    gracefulShutdown: 100.millisecond
   }).try
   let port = server.localAddress.port.value
   let client = Client.open().try
-  ServerState { server: server, client: client, port: port }
+  Ok(ServerState { server: server, client: client, port: port })
 end
 
 # Shuts the server and client down. Called at the end of each case so a failed
@@ -53,8 +53,8 @@ end
 
 # Sends a request with the given method, no headers or body, returning the
 # response.
-foul send(client: Client, port: Integer, method: String, path: String) -> Net.HTTP.Response<Binary> do
-  client.request(method, "http://127.0.0.1:${port}${path}", Headers.empty, Binary.empty).try
+foul send(client: Client, port: Integer, method: String, path: String) -> Result<Net.HTTP.Response<Binary>, Net.NetError> do
+  client.request(method, "http://127.0.0.1:${port}${path}", Headers.empty, Binary.empty)
 end
 
 describe("Rodolfo builds a router") do
@@ -154,8 +154,8 @@ describe("Rodolfo sends markup as a page") do
     let api = Rodolfo.router do
       get "/" do |_| html$`<h1>${"Books & Bits"}</h1>` end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(response.status.code, 200)
@@ -167,8 +167,8 @@ describe("Rodolfo sends markup as a page") do
     let api = Rodolfo.router do
       get "/" do |_| "<h1>not markup</h1>" end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(header(response, "Content-Type"), Just("text/plain; charset=utf-8"))
@@ -181,8 +181,8 @@ describe("Rodolfo sends markup as a page") do
         Response.HTML { status: 404, body: "${html$`<p>${"no & such"}</p>`}" }
       end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/gone")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/gone").try
     teardown(state)
 
     Assert.equal(response.status.code, 404)
@@ -195,11 +195,11 @@ describe("Rodolfo reads query and form fields") do
     let api = Rodolfo.router do
       get "/books" do |env| "[${env.query("q").or("")}]" end
     end
-    let state = boot(api)
-    let plus = send(state.client, state.port, "GET", "/books?q=and+tools")
-    let percent = send(state.client, state.port, "GET", "/books?q=and%20tools")
-    let literal = send(state.client, state.port, "GET", "/books?q=c%2B%2B")
-    let missing = send(state.client, state.port, "GET", "/books")
+    let state = boot(api).try
+    let plus = send(state.client, state.port, "GET", "/books?q=and+tools").try
+    let percent = send(state.client, state.port, "GET", "/books?q=and%20tools").try
+    let literal = send(state.client, state.port, "GET", "/books?q=c%2B%2B").try
+    let missing = send(state.client, state.port, "GET", "/books").try
     teardown(state)
 
     Assert.equal(plus.body.to(String).try, "[and tools]")
@@ -212,8 +212,8 @@ describe("Rodolfo reads query and form fields") do
     let api = Rodolfo.router do
       get "/f" do |env| "${env.queryFields}" end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/f?tag=kex&tag=beam&debug")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/f?tag=kex&tag=beam&debug").try
     teardown(state)
 
     Assert.equal(response.body.to(String).try, "[(tag, Just(kex)), (tag, Just(beam)), (debug, None)]")
@@ -223,7 +223,7 @@ describe("Rodolfo reads query and form fields") do
     let api = Rodolfo.router do
       post "/books" do |env| "[${env.form("title").or("")}]" end
     end
-    let state = boot(api)
+    let state = boot(api).try
     let client = Client.open().try
     let response = client.request(
       "POST",
@@ -269,7 +269,7 @@ describe("Rodolfo binds a port") do
     end
     let server = api.background("127.0.0.1", 0).try
     let client = Client.open().try
-    let response = send(client, server.localAddress.port.value, "GET", "/")
+    let response = send(client, server.localAddress.port.value, "GET", "/").try
     client.close().try
     server.stop().try
 
@@ -282,7 +282,7 @@ describe("Rodolfo binds a port") do
     end
     let server = api.background(0).try
     let client = Client.open().try
-    let response = send(client, server.localAddress.port.value, "GET", "/")
+    let response = send(client, server.localAddress.port.value, "GET", "/").try
     client.close().try
     server.stop().try
 
@@ -295,8 +295,8 @@ describe("Rodolfo serves requests") do
     let api = Rodolfo.router do
       get "/" do |_| "Rodolfo says hello!" end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(response.status.code, 200)
@@ -307,8 +307,8 @@ describe("Rodolfo serves requests") do
     let api = Rodolfo.router do
       get "/" do "no context needed" end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(response.status.code, 200)
@@ -321,8 +321,8 @@ describe("Rodolfo serves requests") do
         "Hello, ${env.param("name").try}!"
       end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/hello/Radar")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/hello/Radar").try
     teardown(state)
 
     Assert.equal(response.body.to(String).try, "Hello, Radar!")
@@ -333,9 +333,9 @@ describe("Rodolfo serves requests") do
       get "/things" do |_| "list" end
       post "/things" do |_| "created" end
     end
-    let state = boot(api)
-    let list = send(state.client, state.port, "GET", "/things")
-    let created = send(state.client, state.port, "POST", "/things")
+    let state = boot(api).try
+    let list = send(state.client, state.port, "GET", "/things").try
+    let created = send(state.client, state.port, "POST", "/things").try
     teardown(state)
 
     Assert.equal(list.body.to(String).try, "list")
@@ -349,8 +349,8 @@ describe("Rodolfo serves requests") do
         Response.JSON { body: "{\"status\":\"ok\"}" }
       end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/health")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/health").try
     teardown(state)
 
     Assert.equal(response.status.code, 200)
@@ -362,8 +362,8 @@ describe("Rodolfo serves requests") do
     let api = Rodolfo.router do
       get "/" do |_| Response.HTML { body: "<h1>hi</h1>" } end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(header(response, "Content-Type"), Just("text/html; charset=utf-8"))
@@ -380,8 +380,8 @@ describe("Rodolfo serves requests") do
         }
       end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "POST", "/things")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "POST", "/things").try
     teardown(state)
 
     Assert.equal(response.status.code, 201)
@@ -398,8 +398,8 @@ describe("Rodolfo serves requests") do
         }
       end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/feed")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/feed").try
     teardown(state)
 
     Assert.equal(header(response, "Content-Type"), Just("application/rss+xml"))
@@ -409,8 +409,8 @@ describe("Rodolfo serves requests") do
     let api = Rodolfo.router do
       delete "/things/:id" do |_| Response.Empty {} end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "DELETE", "/things/7")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "DELETE", "/things/7").try
     teardown(state)
 
     Assert.equal(response.status.code, 204)
@@ -421,8 +421,8 @@ describe("Rodolfo serves requests") do
     let api = Rodolfo.router do
       get "/old" do |_| Response.Redirect { location: "/new" } end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/old")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/old").try
     teardown(state)
 
     Assert.equal(response.status.code, 302)
@@ -438,8 +438,8 @@ describe("Rodolfo serves requests") do
         }
       end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/blob")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/blob").try
     teardown(state)
 
     Assert.equal(header(response, "Content-Type"), Just("application/octet-stream"))
@@ -456,9 +456,9 @@ describe("Rodolfo serves requests") do
         end
       end
     end
-    let state = boot(api)
-    let ok = send(state.client, state.port, "GET", "/books/42")
-    let bad = send(state.client, state.port, "GET", "/books/nope")
+    let state = boot(api).try
+    let ok = send(state.client, state.port, "GET", "/books/42").try
+    let bad = send(state.client, state.port, "GET", "/books/nope").try
     teardown(state)
 
     Assert.equal(ok.status.code, 200)
@@ -467,12 +467,48 @@ describe("Rodolfo serves requests") do
     Assert.equal(bad.body.to(String).try, "{\"error\":\"invalid integer\"}")
   end
 
+  it("answers a route whose .try finds nothing with a 404") do
+    let api = Rodolfo.router do
+      get "/books/:id" do |env|
+        let title = { "1": "Dune" }.get(env.param("id").try).try
+        Response.Text { body: title }
+      end
+    end
+    let state = boot(api).try
+    let found = send(state.client, state.port, "GET", "/books/1").try
+    let missing = send(state.client, state.port, "GET", "/books/2").try
+    teardown(state)
+
+    Assert.equal(found.status.code, 200)
+    Assert.equal(found.body.to(String).try, "Dune")
+    Assert.equal(missing.status.code, 404)
+  end
+
+  it("answers a route whose .try fails with a 500, through its plugs") do
+    let api = Rodolfo.router do
+      plug(poweredBy)
+      get "/count/:n" do |env|
+        let n = Integer.parse(env.param("n").try).try
+        "${n + 1}"
+      end
+    end
+    let state = boot(api).try
+    let ok = send(state.client, state.port, "GET", "/count/41").try
+    let failed = send(state.client, state.port, "GET", "/count/many").try
+    teardown(state)
+
+    Assert.equal(ok.status.code, 200)
+    Assert.equal(ok.body.to(String).try, "42")
+    Assert.equal(failed.status.code, 500)
+    Assert.equal(header(failed, "X-Powered-By"), Just("Rodolfo"))
+  end
+
   it("returns 404 for an unrouted path") do
     let api = Rodolfo.router do
       get "/" do |_| "home" end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/missing")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/missing").try
     teardown(state)
 
     Assert.equal(response.status.code, 404)
@@ -484,9 +520,9 @@ describe("Rodolfo serves requests") do
       get "/users/me" do |_| "me" end
       get "/users/:id" do |env| env.param("id").try end
     end
-    let state = boot(api)
-    let me = send(state.client, state.port, "GET", "/users/me")
-    let other = send(state.client, state.port, "GET", "/users/42")
+    let state = boot(api).try
+    let me = send(state.client, state.port, "GET", "/users/me").try
+    let other = send(state.client, state.port, "GET", "/users/42").try
     teardown(state)
 
     Assert.equal(me.body.to(String).try, "me")
@@ -539,8 +575,8 @@ describe("Rodolfo composes plugs") do
       plug(poweredBy)
       get "/" do |_| Response.Text { body: "hi" } end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(header(response, "X-Powered-By"), Just("Rodolfo"))
@@ -551,8 +587,8 @@ describe("Rodolfo composes plugs") do
       plug(poweredByAround)
       get "/" do |_| Response.Text { body: "hi" } end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(header(response, "X-Powered-By"), Just("Rodolfo"))
@@ -563,8 +599,8 @@ describe("Rodolfo composes plugs") do
       plug(blocked)
       get "/" do |_| "hi" end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(response.status.code, 403)
@@ -577,8 +613,8 @@ describe("Rodolfo composes plugs") do
       plug(marked("b"))
       get "/" do |_| Response.Text { body: "core" } end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
     teardown(state)
 
     Assert.equal(response.body.to(String).try, "a(b(core))")
@@ -596,10 +632,10 @@ describe("Rodolfo composes plugs") do
         end
       end
     end
-    let state = boot(api)
-    let root = send(state.client, state.port, "GET", "/")
-    let books = send(state.client, state.port, "GET", "/api/books")
-    let v2 = send(state.client, state.port, "GET", "/api/v2/books")
+    let state = boot(api).try
+    let root = send(state.client, state.port, "GET", "/").try
+    let books = send(state.client, state.port, "GET", "/api/books").try
+    let v2 = send(state.client, state.port, "GET", "/api/v2/books").try
     teardown(state)
 
     Assert.equal(root.body.to(String).try, "root")
@@ -617,9 +653,9 @@ describe("Rodolfo composes plugs") do
         get "/secret" do |_| "secret" end
       end
     end
-    let state = boot(api)
-    let open = send(state.client, state.port, "GET", "/open")
-    let secret = send(state.client, state.port, "GET", "/admin/secret")
+    let state = boot(api).try
+    let open = send(state.client, state.port, "GET", "/open").try
+    let secret = send(state.client, state.port, "GET", "/admin/secret").try
     teardown(state)
 
     Assert.equal(open.body.to(String).try, "outer(open)")
@@ -636,9 +672,9 @@ describe("Rodolfo composes routers") do
       mount("/admin", admin)
       get "/" do |_| "home" end
     end
-    let state = boot(api)
-    let root = send(state.client, state.port, "GET", "/")
-    let stats = send(state.client, state.port, "GET", "/admin/stats")
+    let state = boot(api).try
+    let root = send(state.client, state.port, "GET", "/").try
+    let stats = send(state.client, state.port, "GET", "/admin/stats").try
     teardown(state)
 
     Assert.equal(root.body.to(String).try, "home")
@@ -654,9 +690,9 @@ describe("Rodolfo composes routers") do
       mount("/admin", admin)
       get "/" do |_| "home" end
     end
-    let state = boot(api)
-    let root = send(state.client, state.port, "GET", "/")
-    let stats = send(state.client, state.port, "GET", "/admin/stats")
+    let state = boot(api).try
+    let root = send(state.client, state.port, "GET", "/").try
+    let stats = send(state.client, state.port, "GET", "/admin/stats").try
     teardown(state)
 
     Assert.equal(root.status.code, 200)
@@ -671,9 +707,9 @@ describe("Rodolfo composes routers") do
       get "/health" do |_| "ok" end
     end
     let api = core + health
-    let state = boot(api)
-    let root = send(state.client, state.port, "GET", "/")
-    let health_ = send(state.client, state.port, "GET", "/health")
+    let state = boot(api).try
+    let root = send(state.client, state.port, "GET", "/").try
+    let health_ = send(state.client, state.port, "GET", "/health").try
     teardown(state)
 
     Assert.equal(root.body.to(String).try, "home")
@@ -689,9 +725,9 @@ describe("Rodolfo composes routers") do
       get "/locked" do |_| "locked" end
     end
     let combined = open_ + locked
-    let state = boot(combined)
-    let open = send(state.client, state.port, "GET", "/open")
-    let secret = send(state.client, state.port, "GET", "/locked")
+    let state = boot(combined).try
+    let open = send(state.client, state.port, "GET", "/open").try
+    let secret = send(state.client, state.port, "GET", "/locked").try
     teardown(state)
 
     Assert.equal(open.status.code, 200)
@@ -709,7 +745,7 @@ describe("Rodolfo serves WebSocket routes") do
         end
       end
     end
-    let state = boot(api)
+    let state = boot(api).try
     let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/echo").try
     socket.send(Text("hello")).try
     let reply = socket.receiveMessage.try
@@ -733,7 +769,7 @@ describe("Rodolfo serves WebSocket routes") do
         end
       end
     end
-    let state = boot(api)
+    let state = boot(api).try
     let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/api/echo").try
     socket.send(Text("scoped")).try
     let reply = socket.receiveMessage.try
@@ -756,8 +792,8 @@ describe("Rodolfo serves WebSocket routes") do
         end
       end
     end
-    let state = boot(api)
-    let home = send(state.client, state.port, "GET", "/")
+    let state = boot(api).try
+    let home = send(state.client, state.port, "GET", "/").try
     let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/echo").try
     socket.send(Text("still works")).try
     let reply = socket.receiveMessage.try
@@ -781,8 +817,8 @@ describe("Rodolfo serves WebSocket routes") do
       end
       get "/*path" do |env| "page ${env.param("path").or("")}" end
     end
-    let state = boot(api)
-    let page = send(state.client, state.port, "GET", "/guide/")
+    let state = boot(api).try
+    let page = send(state.client, state.port, "GET", "/guide/").try
     let socket = WebSocket.connect("ws://127.0.0.1:${state.port}/live").try
     socket.send(Text("upgraded")).try
     let reply = socket.receiveMessage.try
@@ -798,8 +834,8 @@ describe("Rodolfo serves WebSocket routes") do
 end
 
 # Sends a request carrying one header, for the conditional cases.
-foul sendWith(client: Client, port: Integer, path: String, name: String, value: String) -> Net.HTTP.Response<Binary> do
-  client.request("GET", "http://127.0.0.1:${port}${path}", Headers.from([(name, value)]).try, Binary.empty).try
+foul sendWith(client: Client, port: Integer, path: String, name: String, value: String) -> Net.HTTP.Response<Binary> or! Any do
+  Ok(client.request("GET", "http://127.0.0.1:${port}${path}", Headers.from([(name, value)]).try, Binary.empty).try)
 end
 
 # `spec/fixtures/public` is the folder served below. Beside it, and so
@@ -824,11 +860,11 @@ describe("Rodolfo serves static files") do
     let api = Rodolfo.router do
       publicFolder("spec/fixtures/public")
     end
-    let state = boot(api)
-    let text = send(state.client, state.port, "GET", "/hello.txt")
-    let nested = send(state.client, state.port, "GET", "/css/site.css")
-    let image = send(state.client, state.port, "GET", "/LOGO.PNG")
-    let bare = send(state.client, state.port, "GET", "/LICENSE")
+    let state = boot(api).try
+    let text = send(state.client, state.port, "GET", "/hello.txt").try
+    let nested = send(state.client, state.port, "GET", "/css/site.css").try
+    let image = send(state.client, state.port, "GET", "/LOGO.PNG").try
+    let bare = send(state.client, state.port, "GET", "/LICENSE").try
     teardown(state)
 
     Assert.equal(text.status.code, 200)
@@ -847,12 +883,12 @@ describe("Rodolfo serves static files") do
         publicFolder("spec/fixtures/public")
       end
     end
-    let state = boot(api)
-    let found = send(state.client, state.port, "GET", "/assets/hello.txt")
-    let missing = send(state.client, state.port, "GET", "/assets/nope.txt")
-    let directory = send(state.client, state.port, "GET", "/assets/css")
-    let folder = send(state.client, state.port, "GET", "/assets")
-    let slash = send(state.client, state.port, "GET", "/assets/")
+    let state = boot(api).try
+    let found = send(state.client, state.port, "GET", "/assets/hello.txt").try
+    let missing = send(state.client, state.port, "GET", "/assets/nope.txt").try
+    let directory = send(state.client, state.port, "GET", "/assets/css").try
+    let folder = send(state.client, state.port, "GET", "/assets").try
+    let slash = send(state.client, state.port, "GET", "/assets/").try
     teardown(state)
 
     Assert.equal(found.status.code, 200)
@@ -866,8 +902,8 @@ describe("Rodolfo serves static files") do
     let api = Rodolfo.router do
       publicFolder("spec/fixtures/no-such-folder")
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/hello.txt")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/hello.txt").try
     teardown(state)
 
     Assert.equal(response.status.code, 404)
@@ -880,13 +916,13 @@ describe("Rodolfo serves static files") do
     let api = Rodolfo.router do
       publicFolder("spec/fixtures/public")
     end
-    let state = boot(api)
-    let parent = send(state.client, state.port, "GET", "/%2e%2e/secret.txt")
-    let encoded = send(state.client, state.port, "GET", "/%2e%2e%2fsecret.txt")
-    let nested = send(state.client, state.port, "GET", "/css/%2e%2e/%2e%2e/secret.txt")
-    let sibling = send(state.client, state.port, "GET", "/%2e%2e/public-private/notes.txt")
-    let absolute = send(state.client, state.port, "GET", "/%2fetc%2fpasswd")
-    let inside = send(state.client, state.port, "GET", "/css/%2e%2e/hello.txt")
+    let state = boot(api).try
+    let parent = send(state.client, state.port, "GET", "/%2e%2e/secret.txt").try
+    let encoded = send(state.client, state.port, "GET", "/%2e%2e%2fsecret.txt").try
+    let nested = send(state.client, state.port, "GET", "/css/%2e%2e/%2e%2e/secret.txt").try
+    let sibling = send(state.client, state.port, "GET", "/%2e%2e/public-private/notes.txt").try
+    let absolute = send(state.client, state.port, "GET", "/%2fetc%2fpasswd").try
+    let inside = send(state.client, state.port, "GET", "/css/%2e%2e/hello.txt").try
     teardown(state)
 
     Assert.equal(parent.status.code, 404)
@@ -902,10 +938,10 @@ describe("Rodolfo serves static files") do
     let api = Rodolfo.router do
       publicFolder("spec/fixtures/public")
     end
-    let state = boot(api)
-    let alias_ = send(state.client, state.port, "GET", "/alias.txt")
-    let escape_ = send(state.client, state.port, "GET", "/escape.txt")
-    let through = send(state.client, state.port, "GET", "/sibling/notes.txt")
+    let state = boot(api).try
+    let alias_ = send(state.client, state.port, "GET", "/alias.txt").try
+    let escape_ = send(state.client, state.port, "GET", "/escape.txt").try
+    let through = send(state.client, state.port, "GET", "/sibling/notes.txt").try
     teardown(state)
 
     Assert.equal(alias_.status.code, 200)
@@ -919,11 +955,11 @@ describe("Rodolfo serves static files") do
       get "/hello.txt" do "from the route" end
       publicFolder("spec/fixtures/public")
     end
-    let state = boot(api)
-    let routed = send(state.client, state.port, "GET", "/hello.txt")
-    let served = send(state.client, state.port, "GET", "/css/site.css")
-    let headed = send(state.client, state.port, "HEAD", "/css/site.css")
-    let posted = send(state.client, state.port, "POST", "/css/site.css")
+    let state = boot(api).try
+    let routed = send(state.client, state.port, "GET", "/hello.txt").try
+    let served = send(state.client, state.port, "GET", "/css/site.css").try
+    let headed = send(state.client, state.port, "HEAD", "/css/site.css").try
+    let posted = send(state.client, state.port, "POST", "/css/site.css").try
     teardown(state)
 
     Assert.equal(routed.body.to(String).try, "from the route")
@@ -938,15 +974,15 @@ describe("Rodolfo serves static files") do
     let api = Rodolfo.router do
       publicFolder("spec/fixtures/public")
     end
-    let state = boot(api)
-    let first = send(state.client, state.port, "GET", "/hello.txt")
+    let state = boot(api).try
+    let first = send(state.client, state.port, "GET", "/hello.txt").try
     let tag = header(first, "ETag").or("")
     let stamp = header(first, "Last-Modified").or("")
-    let matched = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", tag)
-    let listed = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", "\"other\", ${tag}")
-    let stale = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", "\"other\"")
-    let since = sendWith(state.client, state.port, "/hello.txt", "If-Modified-Since", stamp)
-    let earlier = sendWith(state.client, state.port, "/hello.txt", "If-Modified-Since", "Thu, 01 Jan 1970 00:00:00 GMT")
+    let matched = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", tag).try
+    let listed = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", "\"other\", ${tag}").try
+    let stale = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", "\"other\"").try
+    let since = sendWith(state.client, state.port, "/hello.txt", "If-Modified-Since", stamp).try
+    let earlier = sendWith(state.client, state.port, "/hello.txt", "If-Modified-Since", "Thu, 01 Jan 1970 00:00:00 GMT").try
     teardown(state)
 
     assert(tag.startsWith?("W/\""), "expected a weak ETag, got ${tag}")
@@ -964,9 +1000,9 @@ describe("Rodolfo serves static files") do
     let api = Rodolfo.router do
       publicFolder("spec/fixtures/public", Headers.from([("Cache-Control", "public, max-age=3600")]).try)
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/hello.txt")
-    let unchanged = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", header(response, "ETag").or(""))
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/hello.txt").try
+    let unchanged = sendWith(state.client, state.port, "/hello.txt", "If-None-Match", header(response, "ETag").or("")).try
     teardown(state)
 
     Assert.equal(header(response, "Cache-Control"), Just("public, max-age=3600"))
@@ -981,8 +1017,8 @@ describe("Rodolfo serves static files") do
         publicFolder("spec/fixtures/public")
       end
     end
-    let state = boot(api)
-    let response = send(state.client, state.port, "GET", "/private/hello.txt")
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/private/hello.txt").try
     teardown(state)
 
     Assert.equal(response.status.code, 403)
@@ -994,11 +1030,11 @@ describe("Rodolfo serves static files") do
       get "/gone" do |env| sendFile(env, "spec/fixtures/public/nope.css") end
       get "/folder" do |env| sendFile(env, "spec/fixtures/public/css") end
     end
-    let state = boot(api)
-    let file = send(state.client, state.port, "GET", "/download")
-    let gone = send(state.client, state.port, "GET", "/gone")
-    let folder = send(state.client, state.port, "GET", "/folder")
-    let again = sendWith(state.client, state.port, "/download", "If-None-Match", header(file, "ETag").or(""))
+    let state = boot(api).try
+    let file = send(state.client, state.port, "GET", "/download").try
+    let gone = send(state.client, state.port, "GET", "/gone").try
+    let folder = send(state.client, state.port, "GET", "/folder").try
+    let again = sendWith(state.client, state.port, "/download", "If-None-Match", header(file, "ETag").or("")).try
     teardown(state)
 
     Assert.equal(file.status.code, 200)
@@ -1022,11 +1058,11 @@ describe("Rodolfo serves static files") do
           Headers.from([("Cache-Control", "no-store")]).try)
       end
     end
-    let state = boot(api)
-    let inside = send(state.client, state.port, "GET", "/themes/css/site.css")
-    let climbing = send(state.client, state.port, "GET", "/themes/%2e%2e/secret.txt")
-    let linked = send(state.client, state.port, "GET", "/themes/escape.txt")
-    let pinned = send(state.client, state.port, "GET", "/pinned/hello.txt")
+    let state = boot(api).try
+    let inside = send(state.client, state.port, "GET", "/themes/css/site.css").try
+    let climbing = send(state.client, state.port, "GET", "/themes/%2e%2e/secret.txt").try
+    let linked = send(state.client, state.port, "GET", "/themes/escape.txt").try
+    let pinned = send(state.client, state.port, "GET", "/pinned/hello.txt").try
     teardown(state)
 
     Assert.equal(inside.status.code, 200)

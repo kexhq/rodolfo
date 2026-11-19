@@ -16,7 +16,7 @@
 module Shelf
 
 using Catalog.Book, only: [Book, BookId]
-using Catalog.Books, only: [decoded]
+using Catalog.Books
 using Catalog.Draft, only: [Draft]
 
 # The catalogue file. `LIBRARY_FILE` moves it, so two servers can run side by
