@@ -86,22 +86,39 @@ A reply's own `Content-Type` wins; the record's kind only fills the gap, so
 
 ## Failing inside a route
 
-A `.try` that fails unwinds the route block. Catch it where you can answer it,
-with `trying`:
+A route block may `.try`, and a failure that escapes it is answered for you:
+
+- an empty Optional (`None`) is a `404 Not Found`, so a lookup that comes up
+  empty is a missing page;
+- a failed Result (`Error(reason)`) is logged and answered
+  `500 Internal Server Error`, like any other application bug.
 
 ```rb
-get "/api/books/:id" do |env|
-  let id = Integer.parse(env.param("id").try).try
-  Response.JSON { body: JSON.stringify({ "id": id }) }
-
-rescue |e|
-  Response.JSON { status: 400, body: JSON.stringify({ "error": e.message }) }
+get "/books/:id" do |env|
+  let book = Library.find(env.param("id").try).try   # no such book: 404
+  Response.JSON { body: JSON.stringify({ "title": book.title }) }
 end
 ```
 
-Kex attaches `rescue` to named functions, not to blocks, so a bare
-`rescue` directly inside `do |env| ... end` is a syntax error — `trying` is
-the form that works there.
+Where a failure deserves a different answer, a 400 for input that doesn't
+parse, say, catch it with `trying` before it escapes:
+
+```rb
+get "/api/books/:id" do |env|
+  trying do
+    let id = Integer.parse(env.param("id").try).try
+    Response.JSON { body: JSON.stringify({ "id": id }) }
+  rescue |e|
+    Response.JSON { status: 400, body: JSON.stringify({ "error": e.message }) }
+  end
+end
+```
+
+Kex attaches a bare `rescue` to named functions, not to blocks, so
+`trying` is the form that works inside `do |env| ... end`.
+
+Plugs never see the failure itself: by the time a plug's wrapped handler
+returns, a `None` or `Error` is already the 404 or 500 reply.
 
 ## Plugs
 

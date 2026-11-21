@@ -14,16 +14,53 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Kex and Tey are built from kexhq/kex `main`, not a release: a release
+      # lags the compiler Rodolfo's consumers (marqraft-cli, kexhq/docs)
+      # actually build with, and `main` is the canary that catches a
+      # compiler change before they do.
+      - name: Check out Kex
+        uses: actions/checkout@v4
+        with:
+          repository: kexhq/kex
+          ref: main
+          path: kex-src
+
       - name: Set up Erlang
         uses: erlef/setup-beam@v1
         with:
           otp-version: '28'
 
-      - name: Set up Kex and Tey
-        uses: kexhq/setup-tey@v1
-        with:
-          kex-version: '0.4.0-beta.4'
-          erlang: 'false'
+      - name: Install Kex build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgmp-dev libpcre2-dev libreadline-dev \
+            libssl-dev libboost-context-dev
+
+      # Release, as kexhq/kex's own CI builds it: an unoptimized compiler is
+      # slow enough that compile-time template scans (chat_perf's views) run
+      # past their 10 s limit. `--parallel 2`: an unbounded parallel build
+      # starves the runner until it loses contact with GitHub.
+      - name: Build Kex and Tey
+        working-directory: kex-src
+        run: |
+          cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DKEX_BOOST_STATIC=ON
+          cmake --build build --parallel 2
+          make build-tey
+          make tey-run
+
+      # `tey-run` defaults TEY_ERL to the `erl` that built it; this wrapper
+      # pins it to the runner's own, so the steps below read as they would
+      # against a released `tey`.
+      - name: Put a `tey` wrapper on PATH
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/tey" <<WRAP
+          #!/bin/sh
+          export TEY_ERL="$(command -v erl)"
+          exec "$GITHUB_WORKSPACE/kex-src/tey-run" "\$@"
+          WRAP
+          chmod +x "$HOME/.local/bin/tey"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - run: tey install
       - run: tey build
