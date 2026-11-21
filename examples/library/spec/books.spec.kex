@@ -1,7 +1,7 @@
 # The catalogue's rules are pure, so they are checked without a socket or a
 # file: every case below is a list of books in and a list of books out.
 using Catalog.Book, only: [Book, BookId]
-using Catalog.Books, only: [decoded]
+using Catalog.Books
 using Catalog.Draft, only: [Draft]
 
 # A book with only the fields a case cares about spelled out.
