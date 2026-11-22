@@ -43,10 +43,13 @@ then `tey install` again.
 
 | File | Owns |
 | --- | --- |
-| `src/main.kex` | the room password, the `serving Room` connection registry, and the routes |
+| `src/main.kex` | spawning the room and starting the server |
+| `src/chat/site.kex` | the room password and the routes (module `Chat.Site`) |
+| `src/chat/room.kex` | the `serving Room` connection registry (module `Chat.Room`) |
 | `src/chat/views.kex` | the login form and the chat page (module `Chat.Views`), escaped through Rodolfo's markup tags |
 | `src/chat/protocol.kex` | the three line shapes the room and the browser agree on (module `Chat.Protocol`) |
 | `spec/` | those two, checked without a server: `tey test` |
+| `spec/browser/` | the whole room in Chrome: `tey test:browser` |
 
 Both `Chat.Views` and `examples/library`'s own `Library.Views` are
 namespaced to the example they belong to on purpose: `tey` resolves the
@@ -67,10 +70,23 @@ name is nothing but a query parameter, so it has to survive being rendered as
 HTML *and* being handed to the page's own `<script>` as a JavaScript string
 literal, which is two different escapes on the same stranger's text.
 
-The routes and the `serving Room` registry are not covered: both live in the
-entrypoint module (see the note above `Room` in `src/main.kex`), and what
-they do — broadcasting to sockets that are only real once a server is
-running — is checked against a live server instead.
+The routes and the `serving Room` registry need a running server and a
+browser on the other end of the socket: the browser specs below cover them.
+
+## In a browser
+
+`spec/browser/chat.spec.kex` drives the example in Chrome through
+[Shakespeare](https://github.com/kexhq/shakespeare): the login form, a wrong
+password, a name already taken, and two people, each in a page of their own,
+chatting over the WebSocket. Each case serves the routes in
+`src/chat/site.kex` on a port of its own.
+
+```sh
+tey test:browser   # headless, in the background
+tey test:watch     # a visible Chrome, each action highlighted and paced
+```
+
+`tey test` leaves them out: it runs `spec/*.spec.kex` alone.
 
 ## Idle connections
 

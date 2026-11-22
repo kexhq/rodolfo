@@ -8,5 +8,12 @@ package "chat" do
 
   entrypoint("src/main.kex")
 
+  command("test:browser", run: "tey test spec/browser/chat.spec.kex", description: "Run the browser specs in a headless Chrome")
+  command("test:watch", run: "SHAKESPEARE_WATCH=1 tey test spec/browser/chat.spec.kex", description: "Run the browser specs in a visible Chrome, paced, to watch them")
+
   tey("rodolfo", workspace: true)
+
+  group :browser do
+    tey("shakespeare", git: "https://github.com/kexhq/shakespeare", ref: "5e8501009892ff6d7259c500a34638b007c24e88")
+  end
 end

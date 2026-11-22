@@ -28,6 +28,21 @@ HOST=0.0.0.0 tey run     # reachable from a phone on the same network
 The first run seeds the catalogue from `src/mock_data.kex`; after that the
 file on disk is the catalogue, and deleting it seeds a fresh one.
 
+## In a browser
+
+`spec/browser/library.spec.kex` drives the example in Chrome through
+[Shakespeare](https://github.com/kexhq/shakespeare): searching, and every form
+a librarian submits — add, edit, lend, return, delete — over a scratch
+catalogue file of its own. Each case serves the routes in
+`src/library/site.kex` on a port of its own.
+
+```sh
+tey test:browser   # headless, in the background
+tey test:watch     # a visible Chrome, each action highlighted and paced
+```
+
+`tey test` leaves them out: it runs `spec/*.spec.kex` alone.
+
 ## It is part of the Rodolfo monorepo
 
 This example is a member of the checkout's Tey workspace (see the root
@@ -53,7 +68,8 @@ then `tey install` again.
 
 | File | Owns |
 | --- | --- |
-| `src/main.kex` | the routes: HTTP in, replies out |
+| `src/main.kex` | opening the shelf and starting the server |
+| `src/library/site.kex` | the routes: HTTP in, replies out (module `Library.Site`) |
 | `src/catalog/book.kex` | the `Book` record, its `BookId`, and what one book knows how to do |
 | `src/catalog/books.kex` | the catalogue operations on `[Book]`, and the tab-separated file format |
 | `src/catalog/draft.kex` | form input as it arrives — three untrusted strings — and `validate` |
@@ -61,7 +77,8 @@ then `tey install` again.
 | `src/library/views.kex` | every page (module `Library.Views`), escaped through Rodolfo's markup tags |
 | `src/mock_data.kex` | the catalogue a fresh install starts from |
 
-`spec/` holds one spec file per module; `tey test` runs them. The catalogue's
+`spec/` holds one spec file per module; `tey test` runs them, and
+`tey test:browser` the browser specs in `spec/browser/`. The catalogue's
 rules are pure, so everything except `shelf.kex` is checked without a socket
 or a file.
 

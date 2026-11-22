@@ -1,0 +1,36 @@
+# The status API's routes, apart from `main` so a browser spec can serve them
+# on a port of its own.
+module StatusApi.Site
+
+using JSON
+using Rodolfo
+
+site : Router
+let site = Rodolfo.router do
+  get "/health" do
+    Response.JSON {
+      body: JSON.stringify({ "status": "ok", "service": "catalog" })
+    }
+  end
+
+  get "/api/books/:id" do |env|
+    let id = Integer.parse(env.param("id").try).try
+    Response.JSON {
+      body: JSON.stringify({
+        "id": id,
+        "title": "Programming Kex",
+        "available": true
+      })
+    }
+    rescue |e|
+      Response.JSON {
+        status: 400,
+        body: JSON.stringify({ "error": e.message })
+      }
+  end
+
+  post "/api/echo" do |env|
+    env.request.body.to(String).try
+  end
+end
+

@@ -65,3 +65,17 @@ jobs:
       - run: tey install
       - run: tey build
       - run: tey test
+
+      # Every example in a real browser, through Shakespeare: the runner's
+      # preinstalled Google Chrome, headless. When a spec fails, the evidence
+      # Shakespeare saved (screenshot, page HTML, address) is attached.
+      - name: Browser specs
+        run: tey test:browser
+
+      - name: Keep the browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shakespeare-evidence
+          path: /tmp/shakespeare-failure-*
+          if-no-files-found: ignore

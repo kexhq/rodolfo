@@ -4,6 +4,11 @@ package "rodolfo" do
   kex(">= 0.4.0-beta.5")
   license("MIT")
 
+  # Every example's browser specs, in Chrome through Shakespeare. Each example
+  # has the same two commands for its own specs alone.
+  command("test:browser", run: "sh script/browser-specs.sh", description: "Run every example's browser specs in a headless Chrome")
+  command("test:watch", run: "SHAKESPEARE_WATCH=1 sh script/browser-specs.sh", description: "Run every example's browser specs in a visible Chrome, paced, to watch them")
+
   workspace do
     members(["examples/*"])
   end

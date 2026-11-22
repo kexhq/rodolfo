@@ -1,0 +1,138 @@
+# The library in a real browser: searching, and every form a librarian
+# submits — add, edit, lend, return, delete — over a scratch catalogue.
+#
+#   tey test:browser    # headless
+#   tey test:watch      # a visible, paced browser
+using Shakespeare
+
+foul browserOptions() -> Shakespeare.Options = Shakespeare.Options {
+  watch?: ENV.get("SHAKESPEARE_WATCH") == Just("1"),
+  headless?: ENV.get("SHAKESPEARE_HEADLESS") == Just("1")
+}
+
+# `site` on a port of its own for one case, at the base URL `work` gets.
+# No `.try` in this body: it would catch a failed assertion raised by `work`,
+# and the case would pass.
+foul served(site: Rodolfo.Router, work: String -> Any) -> Void do
+  match site.background(0) do
+    Ok(server) => do
+      work("http://127.0.0.1:${Net.HTTP.Server.localAddress(server).port.value}")
+      Net.HTTP.Server.stop(server)
+      ()
+    end
+    Error(reason) => do
+      assert(false, "the site could not be served: ${reason}")
+      ()
+    end
+  end
+end
+
+# The library over a shelf of its own for one case: the mock catalogue, kept
+# in a scratch file that is removed afterwards.
+foul withLibrary(work: String -> Any) -> Void do
+  let scratch = FS.Directory.createTemporary("library-browser").or("")
+  assert(!scratch.empty?, "a scratch directory should be created")
+  ENV.set("LIBRARY_FILE", FS.Path.join(scratch, "books.tsv"))
+  served(Library.Site.site(Shelf.opened(MockData.MOCK_BOOKS)), work)
+  FS.Directory.deleteAll(scratch)
+  ()
+end
+
+# The catalogue narrowed to Joe Armstrong's one book, through the search form.
+foul searchedArmstrong(page: Shakespeare.Page, base: String) -> Void or! String do
+  page.goto("${base}/books").try
+  page.locator("input[name=q]").fill("Armstrong").try
+  page.getByRole("button", "Search").click().try
+  Shakespeare.expect(page.locator("tbody tr")).toHaveCount(1)
+  Ok(())
+end
+
+describe("the library in a browser") do
+  it("narrows the catalogue to a search") do
+    withLibrary do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/").try
+        Shakespeare.expect(page.locator("h1")).toHaveText("Catalogue")
+        Shakespeare.expect(page.locator("tbody tr")).toHaveCount(MockData.MOCK_BOOKS.count)
+        searchedArmstrong(page, base).try
+        Shakespeare.expect(page.locator("tbody tr")).toContainText("Programming Erlang")
+        page.getByRole("link", "Clear").click().try
+        Shakespeare.expect(page.locator("tbody tr")).toHaveCount(MockData.MOCK_BOOKS.count)
+      end
+    end
+  end
+
+  it("adds a book through the form") do
+    withLibrary do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/books").try
+        page.getByRole("link", "Add a book").click().try
+        page.locator("input[name=title]").fill("Dune").try
+        page.locator("input[name=author]").fill("Frank Herbert").try
+        page.locator("input[name=year]").fill("1965").try
+        page.getByRole("button", "Save").click().try
+        Shakespeare.expect(page.locator(".banner")).toHaveText("Book added.")
+        Shakespeare.expect(page.locator("h1")).toHaveText("Dune")
+        Shakespeare.expect(page.locator(".byline")).toHaveText("Frank Herbert · 1965")
+      end
+    end
+  end
+
+  it("sends an incomplete book back with what is missing") do
+    withLibrary do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/books/new").try
+        page.locator("input[name=year]").fill("soon").try
+        page.getByRole("button", "Save").click().try
+        Shakespeare.expect(page.locator(".errors li")).toHaveCount(3)
+        Shakespeare.expect(page.locator(".errors")).toContainText("Title is required.")
+        Shakespeare.expect(page.locator(".errors")).toContainText("Year must be a whole number.")
+        Shakespeare.expect(page.locator("input[name=year]")).toHaveValue("soon")
+      end
+    end
+  end
+
+  it("edits a book") do
+    withLibrary do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        searchedArmstrong(page, base).try
+        page.getByRole("link", "Programming Erlang").click().try
+        page.getByRole("link", "Edit").click().try
+        Shakespeare.expect(page.locator("input[name=title]")).toHaveValue("Programming Erlang")
+        page.locator("input[name=year]").fill("2013").try
+        page.getByRole("button", "Save").click().try
+        Shakespeare.expect(page.locator(".banner")).toHaveText("Changes saved.")
+        Shakespeare.expect(page.locator(".byline")).toHaveText("Joe Armstrong · 2013")
+      end
+    end
+  end
+
+  it("lends a book out and takes it back") do
+    withLibrary do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        searchedArmstrong(page, base).try
+        page.getByRole("button", "Borrow").click().try
+        Shakespeare.expect(page.locator(".banner")).toHaveText("Book marked as on loan.")
+        page.locator("input[name=q]").fill("Armstrong").try
+        page.getByRole("button", "Search").click().try
+        Shakespeare.expect(page.locator("tbody .pill")).toHaveText("On loan")
+        page.getByRole("button", "Return").click().try
+        Shakespeare.expect(page.locator(".banner")).toHaveText("Book back on the shelf.")
+      end
+    end
+  end
+
+  it("deletes a book") do
+    withLibrary do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        searchedArmstrong(page, base).try
+        page.getByRole("button", "Delete").click().try
+        Shakespeare.expect(page.locator(".banner")).toHaveText("Book removed.")
+        Shakespeare.expect(page.locator("tbody tr")).toHaveCount(MockData.MOCK_BOOKS.count - 1)
+        page.locator("input[name=q]").fill("Armstrong").try
+        page.getByRole("button", "Search").click().try
+        Shakespeare.expect(page.locator(".empty")).toHaveText("No book matches that search.")
+      end
+    end
+  end
+end

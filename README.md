@@ -431,6 +431,18 @@ and `examples/chat` for its broadcast wire format and both of its pages,
 including what a display name may not do once it reaches the page's own
 `<script>`.
 
+Every example also has browser specs in `spec/browser/`, which drive it in
+Chrome through [Shakespeare](https://github.com/kexhq/shakespeare). `tey test`
+leaves them out; two commands run them, from an example for its own or from
+the root for all of them:
+
+```sh
+tey test:browser   # headless, in the background
+tey test:watch     # a visible Chrome, each action highlighted and paced
+```
+
+Chrome is found at `CHROME_PATH` or its usual macOS and Linux locations.
+
 ## Develop
 
 ```sh

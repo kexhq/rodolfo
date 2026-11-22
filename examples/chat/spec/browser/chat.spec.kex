@@ -1,0 +1,96 @@
+# The chat room in a real browser: the login form, then people chatting over
+# the page's WebSocket — each in a page of their own, sharing no cookies.
+#
+#   tey test:browser    # headless
+#   tey test:watch      # a visible, paced browser
+using Shakespeare
+
+foul browserOptions() -> Shakespeare.Options = Shakespeare.Options {
+  watch?: ENV.get("SHAKESPEARE_WATCH") == Just("1"),
+  headless?: ENV.get("SHAKESPEARE_HEADLESS") == Just("1")
+}
+
+# `site` on a port of its own for one case, at the base URL `work` gets.
+# No `.try` in this body: it would catch a failed assertion raised by `work`,
+# and the case would pass.
+foul served(site: Rodolfo.Router, work: String -> Any) -> Void do
+  match site.background(0) do
+    Ok(server) => do
+      work("http://127.0.0.1:${Net.HTTP.Server.localAddress(server).port.value}")
+      Net.HTTP.Server.stop(server)
+      ()
+    end
+    Error(reason) => do
+      assert(false, "the site could not be served: ${reason}")
+      ()
+    end
+  end
+end
+
+# A room of its own, served for one case.
+foul withRoom(work: String -> Any) -> Void do
+  served(Chat.Site.site(Process.spawn(Chat.Room.Room {})), work)
+end
+
+# Signs `page` in as `name` through the login form.
+foul joined(page: Shakespeare.Page, base: String, name: String) -> Void or! String do
+  page.goto("${base}/").try
+  page.locator("input[name=token]").fill(Chat.Site.roomToken).try
+  page.locator("input[name=name]").fill(name).try
+  page.getByRole("button", "Join").click().try
+  Ok(())
+end
+
+describe("the chat room in a browser") do
+  it("turns away a wrong password") do
+    withRoom do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/").try
+        page.locator("input[name=token]").fill("guess").try
+        page.locator("input[name=name]").fill("Ada").try
+        page.getByRole("button", "Join").click().try
+        Shakespeare.expect(page.locator(".error")).toHaveText("Wrong password, or a name is needed.")
+      end
+    end
+  end
+
+  it("signs a person in and lists them in the room") do
+    withRoom do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        joined(page, base, "Ada").try
+        Shakespeare.expect(page.locator("header strong")).toHaveText("Ada")
+        Shakespeare.expect(page.locator("#log")).toContainText("Ada joined")
+        Shakespeare.expect(page.locator("#roster-list li")).toHaveText("Ada (you)")
+      end
+    end
+  end
+
+  it("carries a message from one person to another") do
+    withRoom do |base|
+      Shakespeare.withPage(browserOptions()) do |ada|
+        joined(ada, base, "Ada").try
+        Shakespeare.expect(ada.locator("#log")).toContainText("Ada joined")
+        let bob = ada.newPage().try
+        joined(bob, base, "Bob").try
+        Shakespeare.expect(ada.locator("#log")).toContainText("Bob joined")
+        Shakespeare.expect(ada.locator("#roster-list li")).toHaveCount(2)
+        bob.locator("#text").fill("hello, Ada").try
+        bob.locator("#text").press("Enter").try
+        Shakespeare.expect(ada.locator("#log .message")).toHaveText("Bob:hello, Ada")
+        Shakespeare.expect(bob.locator("#text")).toHaveValue("")
+      end
+    end
+  end
+
+  it("refuses a name already in the room") do
+    withRoom do |base|
+      Shakespeare.withPage(browserOptions()) do |ada|
+        joined(ada, base, "Ada").try
+        Shakespeare.expect(ada.locator("#log")).toContainText("Ada joined")
+        let other = ada.newPage().try
+        joined(other, base, "Ada").try
+        Shakespeare.expect(other.locator(".error")).toContainText("is already in the room")
+      end
+    end
+  end
+end

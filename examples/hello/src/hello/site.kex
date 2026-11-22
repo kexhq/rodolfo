@@ -1,0 +1,20 @@
+# The hello example's routes, apart from `main` so a browser spec can serve
+# them on a port of its own.
+module Hello.Site
+
+using Rodolfo
+
+site : Router
+let site = Rodolfo.router do
+  get "/" do
+    "Rodolfo says hello!"
+  end
+
+  get "/hello/:name" do |env|
+    "Hello, ${env.param("name").try}!"
+  end
+
+  post "/echo" do |env|
+    env.request.body.to(String).try
+  end
+end

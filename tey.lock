@@ -1,17 +1,18 @@
 {
   "version": 1,
-  "workspace": {"members": {"chat": "examples/chat", "chat_perf": "examples/chat_perf", "hello": "examples/hello", "library": "examples/library", "plugs": "examples/plugs", "requestinfo": "examples/requestinfo", "rodolfo": ".", "statusapi": "examples/statusapi", "website": "examples/website"}, "manifest_fingerprint": "69c10755a256ae6b0ba69970c31a280f145457732245cd735c0173ede1701706"},
+  "workspace": {"members": {"chat": "examples/chat", "chat_perf": "examples/chat_perf", "hello": "examples/hello", "library": "examples/library", "plugs": "examples/plugs", "requestinfo": "examples/requestinfo", "rodolfo": ".", "statusapi": "examples/statusapi", "website": "examples/website"}, "manifest_fingerprint": "99737213354fdfa1c68bef20628f5e966759aa003fef29a9a47eb1a2c3b778a5"},
   "toolchain": {"kex": "0.4.0", "kex_requirement": ">= 0.4.0-beta.4 >= 0.4.0-beta.3", "otp": 29, "otp_requirement": ""},
   "packages": {
-    "chat": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/chat", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
-    "chat_perf": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/chat_perf", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
-    "hello": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/hello", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
-    "library": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/library", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
-    "plugs": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/plugs", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
-    "requestinfo": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/requestinfo", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
+    "chat": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/chat", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
+    "chat_perf": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/chat_perf", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
+    "hello": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/hello", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
+    "library": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/library", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
+    "plugs": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/plugs", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
+    "requestinfo": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/requestinfo", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
     "rodolfo": {"version": "0.2.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": ".", "sha256": "", "groups": [], "dependencies": [], "plugins": {}, "workspace": true},
-    "statusapi": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/statusapi", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true},
-    "website": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/website", "sha256": "", "groups": [], "dependencies": ["rodolfo"], "plugins": {}, "workspace": true}
+    "shakespeare": {"version": "0.1.0", "source": "git", "git": "https://github.com/kexhq/shakespeare", "resolved": "5e8501009892ff6d7259c500a34638b007c24e88", "commit": "5e8501009892ff6d7259c500a34638b007c24e88", "subdir": ".", "path": "", "sha256": "b8c229adf2bbf799e7803848b613b6c81c679591f850057b7c6d14df36998b65", "groups": ["browser"], "dependencies": [], "plugins": {}, "workspace": false},
+    "statusapi": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/statusapi", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
+    "website": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/website", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true}
   },
   "plugins": {"approvals": {}}
 }
