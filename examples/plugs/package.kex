@@ -14,6 +14,6 @@ package "plugs" do
   tey("rodolfo", workspace: true)
 
   group :browser do
-    tey("shakespeare", git: "https://github.com/kexhq/shakespeare", ref: "af848daa65df65d214b5e95b9206fa86339e83a5")
+    tey("shakespeare", git: "https://github.com/kexhq/shakespeare", ref: "5e8501009892ff6d7259c500a34638b007c24e88")
   end
 end
