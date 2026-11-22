@@ -1,0 +1,14 @@
+---
+params: [title: String, content: Block<String>]
+---
+<!doctype html>
+<html>
+  <head>
+    <title><%= title %></title>
+    <link rel='stylesheet' href='/site.css'>
+  </head>
+  <body>
+    <nav><a href='/'>Home</a></nav>
+    <%== content() %>
+  </body>
+</html>

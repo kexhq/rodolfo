@@ -1,0 +1,6 @@
+---
+params: [what: String]
+---
+<h1>Not found</h1>
+<p><%= what %></p>
+<p><a href='/books'>Back to the catalogue</a></p>

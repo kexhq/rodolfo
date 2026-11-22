@@ -1,0 +1,11 @@
+---
+params: [book: Book, notice: String, status: String, actions: String]
+---
+<%== notice %>
+<h1><%= book.title %></h1>
+<p class='byline'><%= book.author %> · <%= book.year %></p>
+<p><%== status %></p>
+<div class='actions'>
+  <%== actions %>
+</div>
+<p><a href='/books'>Back to the catalogue</a></p>

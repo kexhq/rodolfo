@@ -1,0 +1,21 @@
+---
+params: [notice: String, term: String, summary: String, rows: String, emptyMessage: String]
+---
+<%== notice %>
+<h1>Catalogue</h1>
+<form class='search' method='get' action='/books'>
+  <input type='search' name='q' value='<%= term %>' placeholder='Title or author' aria-label='Search'>
+  <button type='submit'>Search</button>
+  <% if !term.trim.empty? %>
+  <a href='/books'>Clear</a>
+  <% end %>
+</form>
+<p class='count'><%= summary %></p>
+<% if rows.empty? %>
+<p class='empty'><%= emptyMessage %></p>
+<% else %>
+<table>
+  <thead><tr><th>Title</th><th>Author</th><th>Year</th><th>Status</th><th>Actions</th></tr></thead>
+  <tbody><%== rows %></tbody>
+</table>
+<% end %>

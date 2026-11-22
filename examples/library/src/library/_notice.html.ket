@@ -1,0 +1,6 @@
+---
+params: [notice: String]
+---
+<% if !notice.empty? %>
+<p class='banner'><%= notice %></p>
+<% end %>

@@ -1,0 +1,19 @@
+---
+params: [title: String, stylesheet: String, content: Block<String>]
+---
+<!doctype html>
+<html lang='en'>
+  <head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <title><%= title %> · Rodolfo Library</title>
+    <style><%== stylesheet %></style>
+  </head>
+  <body>
+    <header>
+      <a class='brand' href='/books'>Rodolfo Library</a>
+      <a class='button' href='/books/new'>Add a book</a>
+    </header>
+    <main><%== content() %></main>
+  </body>
+</html>

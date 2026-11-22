@@ -1,0 +1,92 @@
+:root { color-scheme: light dark;
+        --ink: #16181d; --muted: #5b6270; --surface: #fbfbfa; --panel: #ffffff;
+        --line: #e3e3e0; --accent: #3d5a8a; --accent-soft: #eef2f9;
+        --danger: #a03028; --danger-soft: #fbeeec; --good: #2f6a4a; --good-soft: #edf5f0; }
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #e8e9ec; --muted: #9aa1af; --surface: #14161a; --panel: #1b1e24;
+          --line: #2d3138; --accent: #9db8e6; --accent-soft: #1e2634;
+          --danger: #e79088; --danger-soft: #2e2020; --good: #86c6a4; --good-soft: #1a2620; }
+}
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 54rem; padding: 0 1.5rem 4rem; background: var(--surface);
+       color: var(--ink); font: 16px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+       -webkit-font-smoothing: antialiased; }
+a { color: var(--accent); }
+header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center;
+         justify-content: space-between; gap: 1rem; margin-bottom: 0.5rem;
+         padding: 1rem 0; background: color-mix(in srgb, var(--surface) 88%, transparent);
+         backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 650; font-size: 1.05rem; letter-spacing: -0.01em;
+         color: var(--ink); text-decoration: none; }
+.brand:hover { color: var(--accent); }
+h1 { font-size: 1.75rem; letter-spacing: -0.02em; margin: 1.75rem 0 0.35rem; }
+.byline, .count { color: var(--muted); }
+.count { font-size: 0.875rem; margin: 0.75rem 0 1rem; }
+.byline { margin: 0 0 1rem; }
+
+table { width: 100%; border-collapse: separate; border-spacing: 0;
+        background: var(--panel); border: 1px solid var(--line);
+        border-radius: 0.75rem; overflow: hidden; }
+th, td { text-align: left; padding: 0.7rem 0.9rem; vertical-align: middle;
+         border-bottom: 1px solid var(--line); }
+thead th { background: color-mix(in srgb, var(--accent-soft) 60%, transparent);
+           font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+           letter-spacing: 0.06em; color: var(--muted); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+td a { text-decoration: none; font-weight: 550; }
+td a:hover { text-decoration: underline; }
+td.actions-cell { white-space: nowrap; text-align: right; }
+td.actions-cell > * { margin-left: 0.35rem; }
+td.actions-cell .button, td.actions-cell button { padding: 0.3rem 0.6rem;
+                                                  font-size: 0.85rem; font-weight: 500; }
+
+input, button, .button { font: inherit; padding: 0.45rem 0.8rem; border-radius: 0.5rem;
+                         border: 1px solid var(--line); background: var(--panel);
+                         color: inherit; line-height: 1.3; }
+button, .button { cursor: pointer; text-decoration: none; font-weight: 550;
+                  transition: background 120ms ease, border-color 120ms ease; }
+button:hover, .button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+                              background: var(--accent-soft); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input:focus { border-color: var(--accent); outline: none;
+              box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+form.search button, .actions > button[type='submit'] {
+  background: var(--accent); border-color: var(--accent); color: var(--panel); }
+form.search button:hover, .actions > button[type='submit']:hover {
+  background: color-mix(in srgb, var(--accent) 85%, black); }
+button.danger:hover { border-color: var(--danger); background: var(--danger-soft);
+                      color: var(--danger); }
+form.search { display: flex; gap: 0.5rem; align-items: center; margin: 1rem 0; }
+/* min-width: 0 lets the box shrink below an input's intrinsic width, so the
+   Clear link keeps its place instead of being pushed past the right edge. */
+form.search input { flex: 1; min-width: 0; }
+form.search button, form.search a { flex: none; }
+form.search a { align-self: center; font-size: 0.875rem; }
+form.inline { display: inline; }
+label { display: block; margin: 1rem 0; font-size: 0.875rem; font-weight: 550;
+        color: var(--muted); }
+label input { display: block; width: 100%; margin-top: 0.35rem; font-size: 1rem;
+              font-weight: 400; color: var(--ink); }
+.actions { display: flex; align-items: center; gap: 0.6rem; margin: 1.5rem 0; }
+
+.pill { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px;
+        font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em;
+        white-space: nowrap; }
+.loan { background: var(--danger-soft); color: var(--danger); }
+.shelf { background: var(--good-soft); color: var(--good); }
+.banner { margin: 1rem 0 0; padding: 0.7rem 0.9rem; border-radius: 0.6rem;
+          background: var(--good-soft); border: 1px solid color-mix(in srgb, var(--good) 30%, transparent);
+          color: var(--good); font-weight: 550; }
+.errors { margin: 1rem 0; padding: 0.7rem 0.9rem 0.7rem 2rem; border-radius: 0.6rem;
+          background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+          color: var(--danger); }
+.empty { padding: 2.5rem 1rem; text-align: center; color: var(--muted);
+         background: var(--panel); border: 1px dashed var(--line); border-radius: 0.75rem; }
+@media (max-width: 34rem) {
+  thead { display: none; }
+  tbody tr { display: block; padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+  tbody td { display: block; border: 0; padding: 0.15rem 0.9rem; }
+  td.actions-cell { text-align: left; margin-top: 0.4rem; }
+  td.actions-cell > * { margin: 0 0.35rem 0 0; }
+}

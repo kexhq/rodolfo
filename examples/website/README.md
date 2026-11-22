@@ -1,8 +1,9 @@
 # Website
 
-Server-rendered HTML responses: a shared `page` layout wrapping each
-route's content, sent back as `Response.HTML`, styled by a stylesheet
-`publicFolder` serves from `public/`.
+Server-rendered HTML responses: a shared `layout.html.ket` wrapping each
+route's page, compiled in with `Kex.embed` and `Template.html`, sent back as
+`Response.HTML`, and styled by a stylesheet `publicFolder` serves from
+`public/`.
 
 ## Running it
 

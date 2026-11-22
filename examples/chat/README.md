@@ -46,7 +46,7 @@ then `tey install` again.
 | `src/main.kex` | spawning the room and starting the server |
 | `src/chat/site.kex` | the room password and the routes (module `Chat.Site`) |
 | `src/chat/room.kex` | the `serving Room` connection registry (module `Chat.Room`) |
-| `src/chat/views.kex` | the login form and the chat page (module `Chat.Views`), escaped through Rodolfo's markup tags |
+| `src/chat/views.kex` | the login form and the chat page (module `Chat.Views`), rendered from `login.html.ket` and `chat.html.ket` |
 | `src/chat/protocol.kex` | the three line shapes the room and the browser agree on (module `Chat.Protocol`) |
 | `spec/` | those two, checked without a server: `tey test` |
 | `spec/browser/` | the whole room in Chrome: `tey test:browser` |

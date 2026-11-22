@@ -74,7 +74,9 @@ then `tey install` again.
 | `src/catalog/books.kex` | the catalogue operations on `[Book]`, and the tab-separated file format |
 | `src/catalog/draft.kex` | form input as it arrives — three untrusted strings — and `validate` |
 | `src/shelf.kex` | moving the catalogue to and from the disk between requests |
-| `src/library/views.kex` | every page (module `Library.Views`), escaped through Rodolfo's markup tags |
+| `src/library/views.kex` | every page (module `Library.Views`), rendered from the `.ket` templates beside it |
+| `src/library/*.html.ket` | the layout, the four pages, and the partials they share; `Template.html` escapes every `<%= %>` hole |
+| `src/library/library.css` | the stylesheet every page inlines |
 | `src/mock_data.kex` | the catalogue a fresh install starts from |
 
 `spec/` holds one spec file per module; `tey test` runs them, and

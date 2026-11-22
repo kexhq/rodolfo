@@ -1,29 +1,25 @@
 # The website's routes, apart from `main` so a browser spec can serve them on
-# a port of its own.
+# a port of its own. The pages are the `.ket` templates beside this file,
+# compiled in by `Kex.embed` and `Template.html`: `layout.html.ket` is the
+# shell, and each page is the block it wraps.
 module Website.Site
 
 using Rodolfo
 
-let page(title: String, content: String) -> String do
-  "<!doctype html><html><head><title>${title}</title><link rel='stylesheet' href='/site.css'></head><body><nav><a href='/'>Home</a></nav>${content}</body></html>"
-end
+let layout = Template.html(Kex.embed("layout.html.ket"))
+# The home page has no holes, so it is plain HTML rather than a template.
+let home = Kex.embed("home.html")
+let author = Template.html(Kex.embed("author.html.ket"))
 
 site : Router
 foul site = Rodolfo.router do
   get "/" do
-    Response.HTML {
-      body: page(
-        "Rodolfo Books",
-        "<h1>Independent books</h1><p>Small catalogue, big ideas.</p>"
-      )
-    }
+    Response.HTML { body: layout("Rodolfo Books") { home } }
   end
 
   get "/authors/:name" do |env|
     let name = env.param("name").try
-    Response.HTML {
-      body: page(name, "<h1>${name}</h1><p>Author profile</p>")
-    }
+    Response.HTML { body: layout(name) { author(name) } }
   end
 
   # Everything in public/ at the path it has there, so /site.css above is
