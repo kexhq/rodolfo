@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "workspace": {"members": {"chat": "examples/chat", "chat_perf": "examples/chat_perf", "hello": "examples/hello", "library": "examples/library", "plugs": "examples/plugs", "requestinfo": "examples/requestinfo", "rodolfo": ".", "statusapi": "examples/statusapi", "website": "examples/website"}, "manifest_fingerprint": "99737213354fdfa1c68bef20628f5e966759aa003fef29a9a47eb1a2c3b778a5"},
-  "toolchain": {"kex": "0.4.0", "kex_requirement": ">= 0.4.0-beta.4 >= 0.4.0-beta.3", "otp": 29, "otp_requirement": ""},
+  "workspace": {"members": {"chat": "examples/chat", "chat_perf": "examples/chat_perf", "hello": "examples/hello", "library": "examples/library", "plugs": "examples/plugs", "requestinfo": "examples/requestinfo", "rodolfo": ".", "statusapi": "examples/statusapi", "website": "examples/website"}, "manifest_fingerprint": "2eff58d970b56063d7d8aed8d05e772867061f4ded3c1090fe908eabcfcf52cc"},
+  "toolchain": {"kex": "0.4.0", "kex_requirement": ">= 0.4.0-beta.5 >= 0.4.0-beta.3", "otp": 29, "otp_requirement": ""},
   "packages": {
     "chat": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/chat", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},
     "chat_perf": {"version": "0.1.0", "source": "workspace", "git": "", "resolved": "", "commit": "", "subdir": "", "path": "examples/chat_perf", "sha256": "", "groups": [], "dependencies": ["rodolfo", "shakespeare"], "plugins": {}, "workspace": true},

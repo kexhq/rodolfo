@@ -855,11 +855,11 @@ private do
     method: method,
     path: path,
     handler: do |request, context|
-      let handler = wrapped(plugs, do |env| settled(base(env), "${method} ${path}") end)
-      respond(
-        handler(Context { request: request, context: context }),
-        "${method} ${path}"
-      )
+      let route = "${method} ${path}"
+      let handler = wrapped(plugs, do |env| settled(base(env), route) end)
+      guarded(route) do
+        respond(handler(Context { request: request, context: context }), route)
+      end
     end
   }
 
@@ -873,9 +873,40 @@ private do
     path: path,
     handler: do |request, context|
       let env = Context { request: request, context: context }
-      WebSocket.upgrade(request, do |handshake| Accept(do |socket| handler(env, socket) end, Headers.empty, None) end)
+      WebSocket.upgrade(request, do |handshake|
+        Accept(do |socket| guardedSocket("WS ${path}") { handler(env, socket) } end, Headers.empty, None)
+      end)
     end
   }
+
+  # Runs a route and hands back its response, or, when the route raises
+  # rather than returning (a run-time error such as a division by zero or a
+  # `badarg`, three calls deep), logs what it raised and answers 500. A
+  # route that *returns* a failure is `settled`'s to log; this is the case
+  # that otherwise reached the client as a bare 500 with nothing on stderr
+  # (kexhq/rodolfo#27).
+  foul guarded(route: String, work: Block<Net.HTTP.Response<Binary>>) -> Net.HTTP.Response<Binary> do
+    work()
+  rescue |reason|
+    IO.printError("Rodolfo: ${route} raised: ${reason}")
+    Net.HTTP.Response.text(500, "Internal Server Error")
+  end
+
+  # The same for a `ws` handler, which has no response to answer with: the
+  # upgrade is long done, so what went wrong is logged and the connection
+  # ends. A handler that uses `.try` catches whatever is raised inside it,
+  # a run-time error included, and hands it back as an `Error` its `Void`
+  # type would otherwise let drop silently, so a returned `Error` is logged
+  # the way `settled` logs a route's; `rescue` takes a raise from a handler
+  # with no `.try` in it.
+  foul guardedSocket(route: String, work: Block<Any>) -> Void do
+    match work() do
+      Error(reason) => IO.printError("Rodolfo: ${route} failed: ${reason}")
+      _ => Void
+    end
+  rescue |reason|
+    IO.printError("Rodolfo: ${route} raised: ${reason}")
+  end
 
   # Wraps `handler` with `plugs`, first-declared outermost: the first plug's
   # own code runs first (and, for an around-style plug, last) and the last

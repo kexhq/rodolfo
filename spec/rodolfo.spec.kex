@@ -503,6 +503,24 @@ describe("Rodolfo serves requests") do
     Assert.equal(header(failed, "X-Powered-By"), Just("Rodolfo"))
   end
 
+  it("answers a route that raises with a 500, and keeps serving") do
+    let api = Rodolfo.router do
+      get "/divide/:n" do |env|
+        let n = env.param("n").or("0").to(Integer).or(0)
+        "${10 / n}"
+      end
+    end
+    let state = boot(api).try
+    let raised = send(state.client, state.port, "GET", "/divide/0").try
+    let ok = send(state.client, state.port, "GET", "/divide/5").try
+    teardown(state)
+
+    Assert.equal(raised.status.code, 500)
+    Assert.equal(raised.body.to(String).try, "Internal Server Error")
+    Assert.equal(ok.status.code, 200)
+    Assert.equal(ok.body.to(String).try, "2")
+  end
+
   it("returns 404 for an unrouted path") do
     let api = Rodolfo.router do
       get "/" do |_| "home" end
@@ -754,6 +772,35 @@ describe("Rodolfo serves WebSocket routes") do
 
     match reply do
       Text(text) => Assert.equal(text, "hello")
+      _ => assert(false, "expected a Text message back, got ${reply}")
+    end
+  end
+
+  it("keeps serving after a ws handler raises") do
+    let api = Rodolfo.router do
+      ws "/divide" do |_, socket|
+        match socket.receiveMessage.try do
+          Text(text) => socket.send(Text("${10 / text.to(Integer).or(0)}")).try
+          _ => Void
+        end
+      end
+    end
+    let state = boot(api).try
+    let first = WebSocket.connect("ws://127.0.0.1:${state.port}/divide").try
+    first.send(Text("0")).try
+    let ended = first.receiveMessage
+    let second = WebSocket.connect("ws://127.0.0.1:${state.port}/divide").try
+    second.send(Text("5")).try
+    let reply = second.receiveMessage.try
+    second.close
+    teardown(state)
+
+    match ended do
+      Ok(Text(text)) => assert(false, "a raising handler still answered ${text}")
+      _ => true
+    end
+    match reply do
+      Text(text) => Assert.equal(text, "2")
       _ => assert(false, "expected a Text message back, got ${reply}")
     end
   end
