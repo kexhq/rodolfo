@@ -1,0 +1,5 @@
+---
+params: [name: String]
+---
+<h1><%= name %></h1>
+<p>Author profile</p>

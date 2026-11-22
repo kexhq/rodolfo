@@ -1,0 +1,12 @@
+---
+params: [book: Book, status: String, actions: String]
+---
+<tr>
+  <td><a href='/books/<%= book.id %>'><%= book.title %></a></td>
+  <td><%= book.author %></td>
+  <td><%= book.year %></td>
+  <td><%== status %></td>
+  <td class='actions-cell'>
+    <%== actions %>
+  </td>
+</tr>

@@ -1,7 +1,7 @@
 # The pages are pure functions from books to markup, so what they escape and
-# what they say is checked here rather than in a browser. Escaping itself is
-# Rodolfo's — `spec/rodolfo.spec.kex` covers `escape`, `html$`, and `rawHTML$`;
-# what these cases prove is that every page reaches for the escaping tag.
+# what they say is checked here; `spec/browser/` drives them in Chrome. The
+# escaping is `Template.html`'s, on every `<%= %>` hole: what these cases
+# prove is that every value a stranger can type reaches a page through one.
 using Catalog.Book, only: [Book, BookId]
 using Catalog.Draft, only: [Draft]
 

@@ -1,0 +1,16 @@
+---
+params: [book: Book]
+---
+<a class='button' href='/books/<%= book.id %>/edit'>Edit</a>
+<% if book.borrowed? %>
+<form class='inline' method='post' action='/books/<%= book.id %>/return'>
+  <button type='submit'>Return</button>
+</form>
+<% else %>
+<form class='inline' method='post' action='/books/<%= book.id %>/borrow'>
+  <button type='submit'>Borrow</button>
+</form>
+<% end %>
+<form class='inline' method='post' action='/books/<%= book.id %>/delete'>
+  <button class='danger' type='submit'>Delete</button>
+</form>

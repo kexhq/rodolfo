@@ -398,7 +398,7 @@ application would:
 ![The library example's catalogue page](examples/library/screenshot.png)
 
 The catalogue above is what `examples/library` serves on the first run: the
-opening books from `mock_data.kex`, escaped through `html$`, with the search
+opening books from `mock_data.kex`, rendered from `.ket` templates, with the search
 box, the status pills, and the row actions the rest of the example implements.
 
 ![The chat example's room](examples/chat/screenshot.png)

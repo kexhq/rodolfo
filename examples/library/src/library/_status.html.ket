@@ -1,0 +1,8 @@
+---
+params: [book: Book]
+---
+<% if book.borrowed? %>
+<span class='pill loan'>On loan</span>
+<% else %>
+<span class='pill shelf'>On the shelf</span>
+<% end %>
