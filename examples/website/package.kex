@@ -3,7 +3,7 @@
 package "website" do
   version("0.1.0")
   description("Rodolfo example: server-rendered HTML responses and static files")
-  kex(">= 0.4.0-beta.4")
+  kex(">= 0.4.0-beta.5")
   license("MIT")
 
   entrypoint("src/main.kex")
