@@ -89,11 +89,13 @@ password and a different name in each, and chat between them. `PORT` and
 
 | File | Owns |
 | --- | --- |
-| `src/main.kex` | the room password and the routes; the `ws` handler answers `$roster` pages on its own connection |
+| `src/main.kex` | spawning the room and starting the server |
+| `src/chat_perf/site.kex` | the room password and the routes (module `ChatPerf.Site`); the `ws` handler answers `$roster` pages on its own connection |
 | `src/chat_perf/room.kex` | the writer registry, the writer processes, and the room's slots — where both structural changes live |
 | `src/chat_perf/protocol.kex` | the line shapes the room and the browser agree on (module `ChatPerf.Protocol`) |
 | `src/chat_perf/views.kex` | the login form and the chat page (module `ChatPerf.Views`), same escaping contract as the baseline |
 | `spec/` | the wire format and both pages, checked without a server: `tey test` |
+| `spec/browser/` | the room in Chrome: `tey test:browser` |
 | `docs/baseline-benchmark.md` | the "before" measurement this example exists to beat |
 
 It is part of the Rodolfo monorepo's Tey workspace
@@ -110,5 +112,20 @@ tey test
 Everything a spec can reach is a pure function of its input: the wire format
 in `ChatPerf.Protocol` — now including the deltas, the paginated answer, and
 the request parser — and what the two pages escape and dispatch on. The
-routes and the room need a running server; the benchmark harness in
-docs/baseline-benchmark.md is the tool for those.
+routes and the room need a running server: the browser specs below cover
+what one person sees, and the benchmark harness in docs/baseline-benchmark.md
+measures what a full room costs.
+
+## In a browser
+
+`spec/browser/chat_perf.spec.kex` drives the example in Chrome through
+[Shakespeare](https://github.com/kexhq/shakespeare): the same as
+`examples/chat`, plus a person leaving and the roster rebuilt with **sync**.
+Each case serves the routes in `src/chat_perf/site.kex` on a port of its own.
+
+```sh
+tey test:browser   # headless, in the background
+tey test:watch     # a visible Chrome, each action highlighted and paced
+```
+
+`tey test` leaves them out: it runs `spec/*.spec.kex` alone.

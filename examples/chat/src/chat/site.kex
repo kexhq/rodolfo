@@ -1,0 +1,88 @@
+# The chat room's routes, apart from `main` so a browser spec can serve them
+# with a room of its own. `site` takes the room rather than spawning it, so
+# each server, and each spec case, starts with an empty one.
+module Chat.Site
+
+using Rodolfo
+using Net.HTTP.WebSocket, only: [Connection, Message, Text, BinaryMessage, CloseMessage]
+
+# Deliberately simple: one shared password for the whole room, checked
+# against a query parameter on both the login page and the WebSocket URL
+# itself. Real auth would exchange this for a signed session; this is only
+# meant to show `ws` reading the request it was upgraded from.
+roomToken : String
+let roomToken = "let-me-in"
+
+site : Server<Chat.Room.Room> -> Router
+foul site(room) = Rodolfo.router do
+  get "/" do |env|
+    let token = env.query("token").or("")
+    let name = env.query("name").or("").trim
+    # Whether the form was submitted at all, not whether either field came
+    # back non-empty — an empty submission (both fields blank) still sets
+    # `token=&name=` on the query string, present but empty, which is
+    # exactly the case that needs the error shown rather than treated
+    # like a first visit with no query string at all.
+    let attempted = env.query("token").set? || env.query("name").set?
+    let validCredentials = !token.empty? && token == roomToken && !name.empty?
+    if validCredentials && !room.taken?(name).try
+      # `URI.Form` fully qualified, with no `using URI` above: importing
+      # `URI` makes the run stage the toolchain's own prebuilt
+      # `Kex.URI.beam` over the one compiling this program produces, and
+      # only the latter carries the `query/2` dispatcher clause that sends
+      # a `Rodolfo.Context` receiver to Rodolfo's own `query`. With the
+      # import, every `env.query(...)` here fails with `undef` at runtime
+      # — see docs/kex-issues.md #27.
+      let query = URI.Form.from([("token", roomToken), ("name", name)]).encode
+      Response.HTML { body: "${Chat.Views.chat(name, "/chat?${query}")}" }
+    else
+      let error = if !attempted then "" else
+        if validCredentials then "\"${name}\" is already in the room — try another name." else
+          "Wrong password, or a name is needed."
+        end
+      end
+      Response.HTML { body: "${Chat.Views.login(error)}" }
+    end
+  end
+
+  ws "/chat" do |env, socket|
+    let token = env.query("token").or("")
+    let name = env.query("name").or("").trim
+    if token != roomToken || name.empty?
+      socket.close
+    else
+      match room.join(name, socket).try do
+        Just(roster) => do
+          room.broadcast(Chat.Protocol.systemLine("${name} joined"))
+          room.broadcast(Chat.Protocol.rosterLine(roster))
+          # `receiveMessage` blocks for as long as the peer stays connected
+          # — an idle client sends nothing for minutes at a time, which is
+          # the ordinary case for a chat room, not a timeout (kexhq/kex#381,
+          # fixed; docs/kex-issues.md #28).
+          #
+          # A real disconnect still fails the receive rather than ever
+          # handing back a `CloseMessage` — a dropped network, a closed
+          # laptop lid — and leaving the loop on it runs the same cleanup a
+          # clean close does. Skipping that cleanup would leave a phantom
+          # entry in `Room` forever: the name stays "taken" until some later
+          # `broadcast` happens to try this dead socket and prune it.
+          loop do
+            match socket.receiveMessage do
+              Ok(Text(text)) => room.broadcast(Chat.Protocol.chatLine(name, text))
+              Ok(CloseMessage(_, _)) => break
+              Ok(_) => Void
+              Error(_) => break
+            end
+          end
+          let remaining = room.leave(name).try
+          room.broadcast(Chat.Protocol.systemLine("${name} left"))
+          room.broadcast(Chat.Protocol.rosterLine(remaining))
+        end
+        None => do
+          socket.send(Text(Chat.Protocol.systemLine("\"${name}\" is already in this room — try another name."))).try
+          socket.close
+        end
+      end
+    end
+  end
+end

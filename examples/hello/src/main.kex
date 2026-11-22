@@ -1,19 +1,4 @@
-using Rodolfo
-
+# The routes are in `hello/site.kex`, where the browser specs reach them too.
 main do
-  let site = Rodolfo.router do
-    get "/" do
-      "Rodolfo says hello!"
-    end
-
-    get "/hello/:name" do |env|
-      "Hello, ${env.param("name").try}!"
-    end
-
-    post "/echo" do |env|
-      env.request.body.to(String).try
-    end
-  end
-
-  site.start(3000).try
+  Hello.Site.site.start(3000).try
 end

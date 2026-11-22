@@ -1,23 +1,5 @@
-# Reusable route-handler wrapping without hidden global state.
-using Rodolfo
-
-let withRequestInfo(handler) do
-  { |env|
-    let result = handler(env)
-    "${env.request.method} ${env.request.target.source}: ${result}"
-  }
-end
-
+# Reusable route-handler wrapping without hidden global state. The routes are
+# in `request_info/site.kex`, where the browser specs reach them too.
 main do
-  let site = Rodolfo.router do
-    get "/" do
-      "Open /orders/42 to exercise a dynamic route."
-    end
-
-    get("/orders/:id", withRequestInfo(do |env|
-      "Order ${env.param("id").try} is ready"
-    end))
-  end
-
-  site.start(3000).try
+  RequestInfo.Site.site.start(3000).try
 end

@@ -1,0 +1,138 @@
+# The library's routes, apart from `main` so a browser spec can serve them
+# over a shelf of its own. `site` takes the shelf rather than opening it, so
+# a spec decides which catalogue file it reads and writes.
+module Library.Site
+
+using Rodolfo
+using Catalog.Book, only: [Book, BookId]
+using Catalog.Draft, only: [Draft]
+
+# Renders a book that may not exist, with one 404 page for every route.
+withBook : Book? -> (Book -> Rodolfo.Reply) -> Rodolfo.Reply
+let withBook(Just(book), render) = render(book)
+let withBook(None, render) do
+  Response.HTML { status: 404, body: "${Library.Views.missing("No book carries that id.")}" }
+end
+
+# The `:id` in the path, or 0 — an id the shelf never issues, so an unparsable
+# path lands on the same 404 page as a deleted book.
+let bookId(env: Context) -> BookId do
+  env.param("id").or("").trim.to(Integer).or(0).as(BookId)
+end
+
+# The submitted fields of the form body. A missing field reads as empty, which
+# is what `Draft.validate` rejects.
+let submitted(env: Context) -> Draft do
+  Draft {
+    title: env.form("title").or(""),
+    author: env.form("author").or(""),
+    year: env.form("year").or("")
+  }
+end
+
+# One query-string value, or "".
+let queried(env: Context, name: String) -> String do
+  env.query(name).or("")
+end
+
+# The message a redirect asked the next page to show. Routes pass a code, so
+# `?notice=` cannot smuggle prose of its own onto the page.
+let notice(env: Context) -> String? do
+  Library.Views.noticeText(queried(env, "notice"))
+end
+
+# Declaration order decides matches, so `/books/new` is declared before
+# `/books/:id` — otherwise "new" would be read as an id.
+site : Server<Shelf.Catalogue> -> Router
+foul site(shelf) = Rodolfo.router do
+  get "/" do
+    redirectTo("/books")
+  end
+
+  get "/books" do |env|
+    let term = queried(env, "q")
+    Library.Views.index(shelf.matching(term).try, term, notice(env))
+  end
+
+  get "/books/new" do
+    Library.Views.form("Add a book", "/books", Draft {}, [])
+  end
+
+  post "/books" do |env|
+    let draft = submitted(env)
+    let errors = draft.validate
+    if errors.empty?
+      let id = shelf.filed(draft).try
+      redirectTo("/books/${id}?notice=created")
+    else
+      Response.HTML {
+        status: 422,
+        body: "${Library.Views.form("Add a book", "/books", draft, errors)}"
+      }
+    end
+  end
+
+  get "/books/:id" do |env|
+    withBook(shelf.find(bookId(env)).try) do |book|
+      Library.Views.show(book, notice(env))
+    end
+  end
+
+  get "/books/:id/edit" do |env|
+    withBook(shelf.find(bookId(env)).try) do |book|
+      Library.Views.form("Edit this book", "/books/${book.id}", book.drafted, [])
+    end
+  end
+
+  # Browsers only send GET and POST from a form, so editing posts to the
+  # book's own path. `DELETE /books/:id` below serves the same catalogue to
+  # a client that can send any method.
+  post "/books/:id" do |env|
+    let id = bookId(env)
+    let draft = submitted(env)
+    match draft.validate do
+      [] => withBook(shelf.rewritten(id, draft).try) do |book|
+        redirectTo("/books/${book.id}?notice=updated")
+      end
+      errors => withBook(shelf.find(id).try) do |book|
+        Response.HTML {
+          status: 422,
+          body: "${Library.Views.form("Edit this book", "/books/${book.id}", draft, errors)}"
+        }
+      end
+    end
+  end
+
+  post "/books/:id/delete" do |env|
+    if shelf.dropped(bookId(env)).try
+      redirectTo("/books?notice=deleted")
+    else
+      Response.HTML {
+        status: 404,
+        body: "${Library.Views.missing("No book carries that id.")}"
+      }
+    end
+  end
+
+  # Lending either way sends the reader back to the catalogue rather than to
+  # the book they just handled, so the next thing on screen is the shelf.
+  post "/books/:id/borrow" do |env|
+    withBook(shelf.lent(bookId(env), true).try) do |_|
+      redirectTo("/books?notice=lent")
+    end
+  end
+
+  post "/books/:id/return" do |env|
+    withBook(shelf.lent(bookId(env), false).try) do |_|
+      redirectTo("/books?notice=returned")
+    end
+  end
+
+  # The same delete for `curl -X DELETE`: no page to render, so 204.
+  delete "/books/:id" do |env|
+    match shelf.dropped(bookId(env)).try do
+      true => Response.Empty {}
+      false => Response.Empty { status: 404 }
+    end
+  end
+end

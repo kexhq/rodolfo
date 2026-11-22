@@ -16,6 +16,20 @@ tey run        # http://localhost:3000/
 | `GET /` | `curl http://localhost:3000/` |
 | `GET /orders/:id` | `curl http://localhost:3000/orders/42` |
 
+## In a browser
+
+`spec/browser/requestinfo.spec.kex` drives the example in Chrome through
+[Shakespeare](https://github.com/kexhq/shakespeare): the home page and the
+wrapped order route. Each case serves the routes in
+`src/request_info/site.kex` on a port of its own.
+
+```sh
+tey test:browser   # headless, in the background
+tey test:watch     # a visible Chrome, each action highlighted and paced
+```
+
+`tey test` leaves them out: it runs `spec/*.spec.kex` alone.
+
 ## It is part of the Rodolfo monorepo
 
 This example is a member of the checkout's Tey workspace (see the root

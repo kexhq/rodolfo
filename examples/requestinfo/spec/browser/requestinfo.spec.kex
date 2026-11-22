@@ -1,0 +1,48 @@
+# The requestinfo example in a real browser: the wrapped route reports the
+# request it answered.
+#
+#   tey test:browser    # headless
+#   tey test:watch      # a visible, paced browser
+using Shakespeare
+
+foul browserOptions() -> Shakespeare.Options = Shakespeare.Options {
+  watch?: ENV.get("SHAKESPEARE_WATCH") == Just("1"),
+  headless?: ENV.get("SHAKESPEARE_HEADLESS") == Just("1")
+}
+
+# `site` on a port of its own for one case, at the base URL `work` gets.
+# No `.try` in this body: it would catch a failed assertion raised by `work`,
+# and the case would pass.
+foul served(site: Rodolfo.Router, work: String -> Any) -> Void do
+  match site.background(0) do
+    Ok(server) => do
+      work("http://127.0.0.1:${Net.HTTP.Server.localAddress(server).port.value}")
+      Net.HTTP.Server.stop(server)
+      ()
+    end
+    Error(reason) => do
+      assert(false, "the site could not be served: ${reason}")
+      ()
+    end
+  end
+end
+
+describe("the requestinfo example in a browser") do
+  it("points the way from the home page") do
+    served(RequestInfo.Site.site) do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/").try
+        Shakespeare.expect(page.locator("body")).toHaveText("Open /orders/42 to exercise a dynamic route.")
+      end
+    end
+  end
+
+  it("wraps the order page in the request it answered") do
+    served(RequestInfo.Site.site) do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/orders/42").try
+        Shakespeare.expect(page.locator("body")).toHaveText("GET /orders/42: Order 42 is ready")
+      end
+    end
+  end
+end

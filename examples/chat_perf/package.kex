@@ -9,5 +9,12 @@ package "chat_perf" do
 
   entrypoint("src/main.kex")
 
+  command("test:browser", run: "tey test spec/browser/chat_perf.spec.kex", description: "Run the browser specs in a headless Chrome")
+  command("test:watch", run: "SHAKESPEARE_WATCH=1 tey test spec/browser/chat_perf.spec.kex", description: "Run the browser specs in a visible Chrome, paced, to watch them")
+
   tey("rodolfo", workspace: true)
+
+  group :browser do
+    tey("shakespeare", path: "../../../shakespeare-kexmain")
+  end
 end

@@ -1,0 +1,33 @@
+# The website's routes, apart from `main` so a browser spec can serve them on
+# a port of its own.
+module Website.Site
+
+using Rodolfo
+
+let page(title: String, content: String) -> String do
+  "<!doctype html><html><head><title>${title}</title><link rel='stylesheet' href='/site.css'></head><body><nav><a href='/'>Home</a></nav>${content}</body></html>"
+end
+
+site : Router
+foul site = Rodolfo.router do
+  get "/" do
+    Response.HTML {
+      body: page(
+        "Rodolfo Books",
+        "<h1>Independent books</h1><p>Small catalogue, big ideas.</p>"
+      )
+    }
+  end
+
+  get "/authors/:name" do |env|
+    let name = env.param("name").try
+    Response.HTML {
+      body: page(name, "<h1>${name}</h1><p>Author profile</p>")
+    }
+  end
+
+  # Everything in public/ at the path it has there, so /site.css above is
+  # public/site.css. Declared last: it is a catch-all, and the first route
+  # that matches wins.
+  publicFolder("public")
+end

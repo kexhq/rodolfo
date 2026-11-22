@@ -1,0 +1,59 @@
+# The plugs example in a real browser: the token plug guards /admin, and the
+# header plug marks what it lets through.
+#
+#   tey test:browser    # headless
+#   tey test:watch      # a visible, paced browser
+using Shakespeare
+
+foul browserOptions() -> Shakespeare.Options = Shakespeare.Options {
+  watch?: ENV.get("SHAKESPEARE_WATCH") == Just("1"),
+  headless?: ENV.get("SHAKESPEARE_HEADLESS") == Just("1")
+}
+
+# `site` on a port of its own for one case, at the base URL `work` gets.
+# No `.try` in this body: it would catch a failed assertion raised by `work`,
+# and the case would pass.
+foul served(site: Rodolfo.Router, work: String -> Any) -> Void do
+  match site.background(0) do
+    Ok(server) => do
+      work("http://127.0.0.1:${Net.HTTP.Server.localAddress(server).port.value}")
+      Net.HTTP.Server.stop(server)
+      ()
+    end
+    Error(reason) => do
+      assert(false, "the site could not be served: ${reason}")
+      ()
+    end
+  end
+end
+
+describe("the plugs example in a browser") do
+  it("turns a visitor without the token away from /admin") do
+    served(Plugs.Site.site) do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/admin/stats").try
+        Shakespeare.expect(page.locator("body")).toHaveText("missing or wrong token")
+      end
+    end
+  end
+
+  it("lets the token through to /admin/stats") do
+    served(Plugs.Site.site) do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/admin/stats?token=let-me-in").try
+        Shakespeare.expect(page.locator("body")).toHaveText("42 requests served")
+      end
+    end
+  end
+
+  it("marks a text reply with X-Powered-By") do
+    served(Plugs.Site.site) do |base|
+      Shakespeare.withPage(browserOptions()) do |page|
+        page.goto("${base}/").try
+        Shakespeare.expect(page.locator("body")).toHaveText("Open /admin/stats?token=let-me-in")
+        let header = page.evaluate("fetch('/').then(r => r.headers.get('X-Powered-By'))").try
+        assert("${header}" == "Rodolfo", "X-Powered-By was ${header}")
+      end
+    end
+  end
+end

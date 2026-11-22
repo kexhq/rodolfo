@@ -20,6 +20,20 @@ tey run        # http://localhost:3000/
 `public/` is found relative to the working directory, so run the example from
 this directory.
 
+## In a browser
+
+`spec/browser/website.spec.kex` drives the example in Chrome through
+[Shakespeare](https://github.com/kexhq/shakespeare): both pages, the nav link
+between them, and the stylesheet `publicFolder` serves. Each case serves the
+routes in `src/website/site.kex` on a port of its own.
+
+```sh
+tey test:browser   # headless, in the background
+tey test:watch     # a visible Chrome, each action highlighted and paced
+```
+
+`tey test` leaves them out: it runs `spec/*.spec.kex` alone.
+
 ## It is part of the Rodolfo monorepo
 
 This example is a member of the checkout's Tey workspace (see the root
