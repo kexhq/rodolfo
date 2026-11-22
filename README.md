@@ -120,6 +120,18 @@ Kex attaches a bare `rescue` to named functions, not to blocks, so
 Plugs never see the failure itself: by the time a plug's wrapped handler
 returns, a `None` or `Error` is already the 404 or 500 reply.
 
+A route that raises rather than returning, with a run-time error such as a
+division by zero three calls deep, is answered `500 Internal Server Error`
+too, and logged with the route and the reason:
+
+```
+Rodolfo: GET /divide/:n raised: runtime error: division by zero
+```
+
+A `ws` handler has no reply left to send, so a raise there, or an `Error`
+it returns, is logged the same way (`Rodolfo: WS /chat failed: ...`) and the
+connection ends.
+
 ## Plugs
 
 A `plug` wraps every route declared in the same `router` or `scope`, so a
