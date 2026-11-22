@@ -16,6 +16,10 @@ using Net.HTTP, only: [Headers]
 # `Plug.around`'s single two-argument block (`inner`, `env`) rather than the
 # nested-closure form `Plug`'s own shape (`Handler -> Handler`) otherwise
 # needs — either works, this one's just shorter.
+#
+# Neither plug here is annotated `: Rodolfo.Plug`: in a module, Kex checks an
+# annotated zero-parameter binding of a function type as a function of that
+# arity and rejects it (kexhq/kex#763), so the type is inferred instead.
 foul logged = Plug.around do |inner, env|
   let method = env.request.method
   let path = env.request.target.source

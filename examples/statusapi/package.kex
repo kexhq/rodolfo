@@ -14,6 +14,6 @@ package "statusapi" do
   tey("rodolfo", workspace: true)
 
   group :browser do
-    tey("shakespeare", path: "../../../shakespeare-kexmain")
+    tey("shakespeare", git: "https://github.com/kexhq/shakespeare", ref: "af848daa65df65d214b5e95b9206fa86339e83a5")
   end
 end
