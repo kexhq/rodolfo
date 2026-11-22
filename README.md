@@ -140,10 +140,12 @@ headers, request logging, an auth gate — is written once. Write a plug as a
 value (`let name = do |inner| ... end`), never as a named function passed by
 name or by `~` — both currently break for a function that returns a function,
 which is exactly `Plug`'s shape (`Handler -> Handler`); see
-`docs/kex-issues.md` #21 if you're curious what breaks:
+`docs/kex-issues.md` #21 if you're curious what breaks. Leave a plug value
+unannotated, too: in a module, Kex reads `poweredBy : Rodolfo.Plug` as a
+one-argument function and rejects the binding (kexhq/kex#763), so the type is
+inferred instead:
 
 ```rb
-poweredBy : Rodolfo.Plug
 let poweredBy = do |inner|
   do |env|
     match inner(env) do
@@ -163,7 +165,6 @@ the nested closures — still a closure literal, so it's exactly as safe with
 respect to #21 as the form above:
 
 ```rb
-poweredBy : Rodolfo.Plug
 let poweredBy = Plug.around do |inner, env|
   match inner(env) do
     Response.Text { status, body, headers } =>
@@ -210,6 +211,66 @@ nested scopes included, and its own plugs stack after the enclosing router's
 or scope's — so `/admin/stats` above runs `logged`, then `poweredBy`, then
 `requireToken`, then the handler. See `examples/plugs` for the runnable
 version of this.
+
+## Cookies and cross-site requests
+
+`env.cookie("name")` reads a cookie the browser sent, and `withCookie` sets
+one on any reply, a redirect or a bare string alike:
+
+```rb
+post "/signin" do |env|
+  let token = Accounts.signIn(env.form("email").or(""), env.form("password").or("")).try
+  withCookie(env, redirectTo("/"), Cookie { name: "session", value: token, maxAge: Just(30 * 24 * 60 * 60) }).try
+end
+
+get "/" do |env|
+  match env.cookie("session") do
+    Just(token) => "Welcome back"
+    None => redirectTo("/signin")
+  end
+end
+
+post "/signout" do |env|
+  withoutCookie(env, redirectTo("/signin"), "session").try
+end
+```
+
+A `Cookie` defaults to the flags that are easy to get wrong: `HttpOnly`,
+`SameSite=Lax` and `Path=/`, plus `Secure` whenever the request came over
+HTTPS (`env.secure?`, which also believes a proxy's
+`X-Forwarded-Proto: https`). `withCookie` refuses, with an `Error`, a name
+that is not an HTTP token or a value a cookie cannot carry (spaces, quotes,
+commas, semicolons, backslashes), so encode a value such as JSON before
+setting it.
+
+`Plug.sameOrigin()` turns away a forged form: a `POST`, `PUT`, `PATCH` or
+`DELETE` whose `Origin` (or `Referer`) names another site is answered
+`403 Forbidden` before its route runs:
+
+```rb
+Rodolfo.router do
+  plug(Plug.sameOrigin())
+  post "/books" do |env| ... end
+end
+```
+
+A request naming no page at all is let through: browsers send `Origin` with
+every cross-site form and WebSocket handshake, and a client that sends
+neither is not a browser a forged form could ride on. A `ws` route takes no
+part in the plug stack, so its handler asks `env.sameOrigin?` itself:
+
+```rb
+ws "/chat" do |env, socket|
+  if !env.sameOrigin?
+    socket.close
+  else
+    ...
+  end
+end
+```
+
+Sessions, a value a signed or stored cookie points at, wait for a `Crypto`
+module in Kex (kexhq/kex#459).
 
 ## Composing routers
 
