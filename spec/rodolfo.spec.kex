@@ -1121,3 +1121,139 @@ describe("Rodolfo serves static files") do
     Assert.equal(header(inside, "Cache-Control"), None)
   end
 end
+
+# Sends a request with the given method and headers, for the cookie and
+# same-origin cases.
+foul sendHeaders(client: Client, port: Integer, method: String, path: String, headers: [(String, String)]) -> Net.HTTP.Response<Binary> or! Any do
+  Ok(client.request(method, "http://127.0.0.1:${port}${path}", Headers.from(headers).try, Binary.empty).try)
+end
+
+describe("Rodolfo reads and sets cookies") do
+  it("reads a cookie the browser sent, among others") do
+    let api = Rodolfo.router do
+      get "/" do |env| env.cookie("session").or("none") end
+    end
+    let state = boot(api).try
+    let sent = sendHeaders(state.client, state.port, "GET", "/", [("Cookie", "theme=dark; session=abc123")]).try
+    let unsent = sendHeaders(state.client, state.port, "GET", "/", [("Cookie", "sessionless=1")]).try
+    let bare = send(state.client, state.port, "GET", "/").try
+    teardown(state)
+
+    Assert.equal(sent.body.to(String).try, "abc123")
+    Assert.equal(unsent.body.to(String).try, "none")
+    Assert.equal(bare.body.to(String).try, "none")
+  end
+
+  it("sets a cookie on a redirect with the safe defaults") do
+    let api = Rodolfo.router do
+      post "/signin" do |env|
+        withCookie(env, redirectTo("/"), Cookie { name: "session", value: "abc123", maxAge: Just(60) }).try
+      end
+    end
+    let state = boot(api).try
+    let response = send(state.client, state.port, "POST", "/signin").try
+    teardown(state)
+
+    Assert.equal(response.status.code, 303)
+    Assert.equal(header(response, "Location"), Just("/"))
+    Assert.equal(header(response, "Set-Cookie"), Just("session=abc123; Path=/; Max-Age=60; HttpOnly; SameSite=Lax"))
+  end
+
+  it("keeps a bare string reply's body, and marks the cookie Secure behind HTTPS") do
+    let api = Rodolfo.router do
+      get "/" do |env|
+        withCookie(env, "hello", Cookie { name: "theme", value: "dark" }).try
+      end
+    end
+    let state = boot(api).try
+    let plain = send(state.client, state.port, "GET", "/").try
+    let proxied = sendHeaders(state.client, state.port, "GET", "/", [("X-Forwarded-Proto", "https")]).try
+    teardown(state)
+
+    Assert.equal(plain.body.to(String).try, "hello")
+    Assert.equal(header(plain, "Content-Type"), Just("text/plain; charset=utf-8"))
+    Assert.equal(header(plain, "Set-Cookie"), Just("theme=dark; Path=/; HttpOnly; SameSite=Lax"))
+    Assert.equal(header(proxied, "Set-Cookie"), Just("theme=dark; Path=/; HttpOnly; SameSite=Lax; Secure"))
+  end
+
+  it("sets two cookies on one reply") do
+    let api = Rodolfo.router do
+      get "/" do |env|
+        let one = withCookie(env, "ok", Cookie { name: "a", value: "1" }).try
+        withCookie(env, one, Cookie { name: "b", value: "2", httpOnly?: false, sameSite: "Strict" }).try
+      end
+    end
+    let state = boot(api).try
+    let response = send(state.client, state.port, "GET", "/").try
+    teardown(state)
+
+    Assert.equal(response.headers.getAll("Set-Cookie"), ["a=1; Path=/; HttpOnly; SameSite=Lax", "b=2; Path=/; SameSite=Strict"])
+  end
+
+  it("expires a cookie to sign out") do
+    let api = Rodolfo.router do
+      post "/signout" do |env| withoutCookie(env, redirectTo("/"), "session").try end
+    end
+    let state = boot(api).try
+    let response = send(state.client, state.port, "POST", "/signout").try
+    teardown(state)
+
+    Assert.equal(header(response, "Set-Cookie"), Just("session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"))
+  end
+
+  it("answers 500 rather than send a cookie it cannot carry") do
+    let api = Rodolfo.router do
+      get "/value" do |env| withCookie(env, "x", Cookie { name: "a", value: "two words" }).try end
+      get "/name" do |env| withCookie(env, "x", Cookie { name: "a b", value: "1" }).try end
+    end
+    let state = boot(api).try
+    let value = send(state.client, state.port, "GET", "/value").try
+    let name = send(state.client, state.port, "GET", "/name").try
+    teardown(state)
+
+    Assert.equal(value.status.code, 500)
+    Assert.equal(header(value, "Set-Cookie"), None)
+    Assert.equal(name.status.code, 500)
+  end
+end
+
+describe("Rodolfo refuses cross-site requests") do
+  it("turns away a POST from another site, and lets this site's through") do
+    let api = Rodolfo.router do
+      plug(Plug.sameOrigin())
+      get "/" do "read" end
+      post "/" do "changed" end
+    end
+    let state = boot(api).try
+    let here = "http://127.0.0.1:${state.port}"
+    let same = sendHeaders(state.client, state.port, "POST", "/", [("Origin", here)]).try
+    let cross = sendHeaders(state.client, state.port, "POST", "/", [("Origin", "https://evil.example")]).try
+    let referred = sendHeaders(state.client, state.port, "POST", "/", [("Referer", "https://evil.example/form")]).try
+    let sandboxed = sendHeaders(state.client, state.port, "POST", "/", [("Origin", "null")]).try
+    let unnamed = send(state.client, state.port, "POST", "/").try
+    let read = sendHeaders(state.client, state.port, "GET", "/", [("Origin", "https://evil.example")]).try
+    teardown(state)
+
+    Assert.equal(same.status.code, 200)
+    Assert.equal(same.body.to(String).try, "changed")
+    Assert.equal(cross.status.code, 403)
+    Assert.equal(referred.status.code, 403)
+    Assert.equal(sandboxed.status.code, 403)
+    Assert.equal(unnamed.status.code, 200)
+    Assert.equal(read.status.code, 200)
+  end
+
+  it("answers sameOrigin? for a handler that checks it itself") do
+    let api = Rodolfo.router do
+      get "/" do |env| "${env.sameOrigin?}" end
+    end
+    let state = boot(api).try
+    let here = "http://127.0.0.1:${state.port}"
+    let same = sendHeaders(state.client, state.port, "GET", "/", [("Origin", here)]).try
+    let other = sendHeaders(state.client, state.port, "GET", "/", [("Origin", "http://127.0.0.1:1")]).try
+    teardown(state)
+
+    Assert.equal(same.body.to(String).try, "true")
+    Assert.equal(other.body.to(String).try, "false")
+  end
+end

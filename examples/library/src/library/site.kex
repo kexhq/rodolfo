@@ -45,6 +45,10 @@ end
 # `/books/:id` — otherwise "new" would be read as an id.
 site : Server<Shelf.Catalogue> -> Router
 foul site(shelf) = Rodolfo.router do
+  # Every change here is a form POST, so a page on another site must not be
+  # able to submit one: this turns those away with a 403.
+  plug(Plug.sameOrigin())
+
   get "/" do
     redirectTo("/books")
   end

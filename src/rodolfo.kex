@@ -185,6 +185,138 @@ make Context do
   # @return [[(String, String?)]] the decoded fields, in order
   formFields :> [(String, String?)]
   let formFields = decodedFields(@request.body.to(String).or(""))
+
+  # Returns a cookie the browser sent, or +None+ when it sent no such name.
+  #
+  # Reads every +Cookie+ header; the first pair carrying +name+ wins.
+  #
+  # @param name [String] the cookie to read
+  # @return [String?] its value, exactly as the browser sent it
+  #
+  # @example
+  #   let session = env.cookie("session").or("")
+  cookie :> String -> String?
+  let cookie(name) do
+    let pairs = @request.headers.getAll("Cookie").flatMap { |line| line.split(";") }
+    pairs
+      .map { |pair| pair.trim }
+      .find { |pair| pair.startsWith?("${name}=") }
+      .map { |pair| pair.drop(name.length + 1) }
+  end
+
+  # Whether the request reached the application over HTTPS: directly, or
+  # through a proxy that says so with +X-Forwarded-Proto: https+.
+  #
+  # +withCookie+ reads it to mark a cookie +Secure+.
+  #
+  # @return [Bool] true for an HTTPS request
+  secure? :> Bool
+  let secure? do
+    let forwarded = @request.headers.get("X-Forwarded-Proto").or("").split(",").first.or("").trim.lowerCase
+    forwarded == "https" || @request.target.string.lowerCase.startsWith?("https:")
+  end
+
+  # Whether the request came from a page of this same site.
+  #
+  # A browser names the page a request comes from in +Origin+ (or, failing
+  # that, +Referer+); this compares that page's host and port with the
+  # request's own +Host+. A request carrying neither is let through: browsers
+  # send +Origin+ with every cross-site form POST and WebSocket handshake, and
+  # a client that sends neither (+curl+, another server) is not a browser a
+  # forged form could ride on. An +Origin+ of +null+ (a sandboxed frame, a
+  # +file:+ page) is not this site.
+  #
+  # +Plug.sameOrigin+ applies it to state-changing requests. A +ws+ route
+  # takes no part in the plug stack, so its handler checks it instead.
+  #
+  # @return [Bool] true unless the request names a page of another site
+  #
+  # @example A ws route turning away a handshake from another site
+  #   ws "/chat" do |env, socket|
+  #     if !env.sameOrigin?
+  #       socket.close
+  #     else
+  #       ...
+  #     end
+  #   end
+  sameOrigin? :> Bool
+  let sameOrigin? do
+    let host = @request.headers.get("Host").or("").trim.lowerCase
+    match @request.headers.get("Origin").or(@request.headers.get("Referer").or("")).trim do
+      "" => true
+      page => !host.empty? && authority(page) == Just(host)
+    end
+  end
+end
+
+# A cookie for +withCookie+ to set on a reply.
+#
+# The defaults are the safe ones: +HttpOnly+ keeps it from page scripts,
+# +SameSite=Lax+ keeps it off cross-site POSTs, and +Path=/+ sends it to
+# every route. +Secure+ is added whenever the request came over HTTPS (see
+# +Context#secure?+); set +secure?+ to require it regardless. +maxAge+ is in
+# seconds; +None+ makes a cookie that ends with the browser session.
+#
+# @example A cookie for thirty days
+#   Cookie { name: "session", value: token, maxAge: Just(30 * 24 * 60 * 60) }
+record Cookie do
+  name : String
+  value : String
+  path : String = "/"
+  domain : String = ""
+  maxAge : Integer? = None
+  httpOnly? : Bool = true
+  sameSite : String = "Lax"
+  secure? : Bool = false
+end
+
+# Sets a cookie on any reply, adding a +Set-Cookie+ header.
+#
+# A bare +String+ or +Safe+ reply becomes the +Response.Text+ or
+# +Response.HTML+ it stood for, so it can carry the header. The cookie's name
+# must be an HTTP token and its value plain cookie text (no spaces, quotes,
+# commas, semicolons or backslashes): encode anything else, as base64 or hex,
+# before setting it.
+#
+# @param env [Context] the request, which decides +Secure+
+# @param reply [Reply] the reply to add the cookie to
+# @param cookie [Cookie] the cookie
+# @return [Result<Reply, String>] the reply with its +Set-Cookie+ header, or why the cookie cannot be sent
+#
+# @example Signing in: set the cookie on the redirect
+#   post "/signin" do |env|
+#     withCookie(env, redirectTo("/"), Cookie { name: "session", value: token }).try
+#   end
+withCookie : Context -> Reply -> Cookie -> Result<Reply, String>
+let withCookie(env, reply, cookie) do
+  if !cookieName?(cookie.name)
+    return Error("`${cookie.name}` is not a cookie name: use letters, digits and !#$%&'*+-.^_`|~")
+  end
+  if !cookieValue?(cookie.value)
+    return Error("the value of cookie `${cookie.name}` holds a character a cookie cannot carry: encode it first")
+  end
+  withHeader(reply, "Set-Cookie", setCookieLine(cookie, cookie.secure? || env.secure?))
+end
+
+# Tells the browser to drop a cookie: the same name and path, already
+# expired.
+#
+# @param env [Context] the request, which decides +Secure+
+# @param reply [Reply] the reply to add the expiry to
+# @param name [String] the cookie to drop
+# @param path [String] the path it was set with, +/+ unless it was set elsewhere
+# @return [Result<Reply, String>] the reply with its +Set-Cookie+ header, or why it cannot be sent
+#
+# @example Signing out
+#   post "/signout" do |env|
+#     withoutCookie(env, redirectTo("/"), "session").try
+#   end
+withoutCookie : Context -> Reply -> String -> Result<Reply, String>
+let withoutCookie(env, reply, name) = withoutCookie(env, reply, name, "/")
+
+withoutCookie : Context -> Reply -> String -> String -> Result<Reply, String>
+let withoutCookie(env, reply, name, path) do
+  withCookie(env, reply, Cookie { name: name, value: "", path: path, maxAge: Just(0) })
 end
 
 # Everything a route block may return.
@@ -586,7 +718,6 @@ module Plug do
   # @return [Plug] the plug
   #
   # @example A plug that adds a header to every response it lets through
-  #   poweredBy : Rodolfo.Plug
   #   let poweredBy = Plug.around do |inner, env|
   #     match inner(env) do
   #       Response.Text { status, body, headers } =>
@@ -596,6 +727,31 @@ module Plug do
   #   end
   around : (Handler -> Context -> Reply) -> Rodolfo.Plug
   let around(body) = do |inner| do |env| body(inner, env) end end
+
+  # A plug that refuses a state-changing request from another site, the
+  # forged form a cookie would otherwise sign in for: a +POST+, +PUT+,
+  # +PATCH+ or +DELETE+ whose +Origin+ (or +Referer+) is not this site is
+  # answered +403 Forbidden+ before its route runs. Reads pass untouched.
+  #
+  # What counts as this site is +Context#sameOrigin?+'s rule. A +ws+ route
+  # takes no part in the plug stack; its handler checks
+  # +env.sameOrigin?+ itself.
+  #
+  # @return [Plug] the plug
+  #
+  # @example Every form in the application
+  #   Rodolfo.router do
+  #     plug(Plug.sameOrigin())
+  #     post "/books" do |env| ... end
+  #   end
+  let sameOrigin() -> Rodolfo.Plug = around do |inner, env|
+    let changes? = ["POST", "PUT", "PATCH", "DELETE"].contains?(env.request.method.upperCase)
+    if changes? && !env.sameOrigin?
+      Response.Text { status: 403, body: "Forbidden: this request came from another site" }
+    else
+      inner(env)
+    end
+  end
 end
 
 # Groups declarations under a path prefix and, if it has any `plug` lines of
@@ -983,4 +1139,63 @@ private do
   # carrying a line break, instead of writing an injectable message.
   appended : Headers -> String -> String -> Result<Headers, NetError>
   let appended(headers, name, value) = Headers.from([...headers.entries, (name, value)])
+
+  # The host and port a page's address names, lowercased: what a +Host+
+  # header carries for that page's site. +None+ for an address without one,
+  # such as +null+.
+  authority : String -> String?
+  let authority(address) do
+    match address.indexOf("://") do
+      Just(at) => do
+        let rest = address.drop(at + 3)
+        let host = rest.split("/").first.or("").lowerCase
+        host.empty? then None else Just(host)
+      end
+      None => None
+    end
+  end
+
+  # An HTTP token (RFC 9110 5.6.2): what a cookie name must be.
+  cookieName? : String -> Bool
+  let cookieName?(name) do
+    let allowed = "!#$%&'*+-.^_`|~"
+    !name.empty? && name.chars.all? { |c| (c.codepoint < 128 && (c.alpha? || c.digit?)) || allowed.contains?(c.string) }
+  end
+
+  # Plain cookie text (RFC 6265 4.1.1's cookie-octet): no control
+  # characters, spaces, quotes, commas, semicolons or backslashes.
+  cookieValue? : String -> Bool
+  let cookieValue?(value) do
+    value.chars.all? { |c| c.codepoint > 32 && c.codepoint < 127 && !"\",;\\".contains?(c.string) }
+  end
+
+  # The +Set-Cookie+ line for a cookie.
+  setCookieLine : Cookie -> Bool -> String
+  let setCookieLine(cookie, secure?) do
+    let parts = ["${cookie.name}=${cookie.value}", "Path=${cookie.path}"]
+    let domain = cookie.domain.empty? then [] else ["Domain=${cookie.domain}"]
+    let age = cookie.maxAge.map { |seconds| ["Max-Age=${seconds}"] }.or([])
+    let http = cookie.httpOnly? then ["HttpOnly"] else []
+    let site = cookie.sameSite.empty? then [] else ["SameSite=${cookie.sameSite}"]
+    # A browser drops a SameSite=None cookie that is not also Secure.
+    let tls = (secure? || cookie.sameSite == "None") then ["Secure"] else []
+    [...parts, ...domain, ...age, ...http, ...site, ...tls].join("; ")
+  end
+
+  # A reply with one more header. A bare String or Safe becomes the
+  # Response.Text or Response.HTML it stood for, so it has headers to carry.
+  withHeader : Reply -> String -> String -> Result<Reply, String>
+  let withHeader(reply, name, value) do
+    let added = do |headers| headers.add(name, value).mapError { |reason| "${reason}" } end
+    match reply do
+      Rodolfo.Response.JSON { status, body, headers } => Ok(Rodolfo.Response.JSON { status: status, body: body, headers: added(headers).try })
+      Rodolfo.Response.Text { status, body, headers } => Ok(Rodolfo.Response.Text { status: status, body: body, headers: added(headers).try })
+      Rodolfo.Response.HTML { status, body, headers } => Ok(Rodolfo.Response.HTML { status: status, body: body, headers: added(headers).try })
+      Rodolfo.Response.Raw { status, body, contentType, headers } => Ok(Rodolfo.Response.Raw { status: status, body: body, contentType: contentType, headers: added(headers).try })
+      Rodolfo.Response.Empty { status, headers } => Ok(Rodolfo.Response.Empty { status: status, headers: added(headers).try })
+      Rodolfo.Response.Redirect { status, location, headers } => Ok(Rodolfo.Response.Redirect { status: status, location: location, headers: added(headers).try })
+      Rodolfo.Markup.Safe { markup } => Ok(Rodolfo.Response.HTML { body: markup, headers: added(Headers.empty).try })
+      text: String => Ok(Rodolfo.Response.Text { body: text, headers: added(Headers.empty).try })
+    end
+  end
 end
