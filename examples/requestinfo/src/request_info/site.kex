@@ -4,7 +4,7 @@ module RequestInfo.Site
 
 using Rodolfo
 
-let withRequestInfo(handler) do
+let withRequestInfo(handler: Context -> Outcome) -> Handler do
   do |env|
     let result = handler(env)
     "${env.request.method} ${env.request.target.source}: ${result}"
