@@ -464,7 +464,7 @@ describe("Rodolfo serves requests") do
     Assert.equal(ok.status.code, 200)
     Assert.equal(ok.body.to(String).try, "{\"id\":42}")
     Assert.equal(bad.status.code, 400)
-    Assert.equal(bad.body.to(String).try, "{\"error\":\"invalid integer\"}")
+    Assert.equal(bad.body.to(String).try, "{\"error\":\"expected a digit at 0\"}")
   end
 
   it("answers a route whose .try finds nothing with a 404") do

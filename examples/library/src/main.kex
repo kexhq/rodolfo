@@ -21,7 +21,7 @@ using MockData
 
 main do
   let shelf = Shelf.opened(MockData.MOCK_BOOKS)
-  let port = ENV.get("PORT").flatMap { |text| text.to(Integer) }.or(3000)
+  let port = ENV.get("PORT").into { |text| text.to(Integer) }.or(3000)
   let bindHost = ENV.get("HOST").or("127.0.0.1")
   IO.printLine("Rodolfo Library: ${shelf.matching("").try.count} books in ${Shelf.catalogueFile}")
   if bindHost == "0.0.0.0"
